@@ -1,0 +1,25 @@
+# Core
+datasets>=2.18.0
+transformers>=4.40.0
+torch>=2.2.0
+
+# Audio
+soundfile>=0.12.1
+librosa>=0.10.1
+numpy>=1.26.0
+
+# Alignment
+whisperx>=3.1.5
+
+# Text / Indic NLP
+indic-nlp-library>=0.92
+
+# Config
+pyyaml>=6.0.1
+
+# Evaluation (Week 4-5)
+jiwer>=3.0.4              # WER / CER
+
+# Packaging (Week 5-6)
+optimum>=1.19.0
+onnxruntime>=1.17.0
