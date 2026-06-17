@@ -1,0 +1,39 @@
+# ============================================================
+# Hindi TTS Pipeline Config
+# ============================================================
+
+language: hi
+script: devanagari
+language_name: Hindi
+
+dataset: ai4bharat/IndicVoices-R
+dataset_split: train
+dataset_language_key: hi
+
+sample_rate: 22050                    # TTS typically uses higher sample rate than STT
+channels: 1
+audio_format: wav
+
+min_duration: 1.0
+max_duration: 20.0
+min_rms_db: -40.0
+
+remove_empty_transcripts: true
+normalize_numerals: true
+strip_extra_whitespace: true
+
+alignment_model: WAV2VEC2_ASR_LARGE_LV60K_960H
+min_alignment_score: 0.5
+align_batch_size: 16
+
+base_model: ai4bharat/indic-parler-tts
+task: tts
+
+eval_split: 0.1
+output_dir: models/hindi_tts
+
+paths:
+  raw_dir: data/raw/hi_tts
+  processed_dir: data/processed/hi_tts
+  manifest: data/processed/hi_tts/manifest.json
+  catalogue: data/processed/hi_tts/catalogue.csv

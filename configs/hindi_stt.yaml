@@ -1,0 +1,52 @@
+# ============================================================
+# Hindi STT Pipeline Config
+# To add a new language: copy this file, change the values below.
+# Zero code changes required.
+# ============================================================
+
+# --- Language Identity ---
+language: hi                          # ISO 639-1 code
+script: devanagari                    # writing system
+language_name: Hindi                  # human-readable label
+
+# --- Data Source ---
+dataset: ai4bharat/IndicVoices-R      # HuggingFace dataset ID
+dataset_split: train                  # which split to pull
+dataset_language_key: hi              # filter key inside the dataset
+
+# --- Audio Standards ---
+sample_rate: 16000                    # Hz — Whisper expects 16kHz
+channels: 1                           # mono
+audio_format: wav
+
+# --- Duration Filters (seconds) ---
+min_duration: 1.0
+max_duration: 20.0
+
+# --- Volume Filter ---
+min_rms_db: -40.0                     # clips quieter than this are dropped
+
+# --- Text Filters ---
+remove_empty_transcripts: true
+normalize_numerals: true              # convert Devanagari digits → ASCII
+strip_extra_whitespace: true
+
+# --- Alignment ---
+alignment_model: WAV2VEC2_ASR_LARGE_LV60K_960H   # WhisperX alignment backbone
+min_alignment_score: 0.5             # drop word-segments below this confidence
+align_batch_size: 16
+
+# --- Model ---
+base_model: openai/whisper-small      # swap to ai4bharat/indicwhisper-hi when available on HF
+task: transcribe
+
+# --- Training (used in Week 3) ---
+eval_split: 0.1
+output_dir: models/hindi_stt
+
+# --- Paths (relative to project root) ---
+paths:
+  raw_dir: data/raw/hi
+  processed_dir: data/processed/hi
+  manifest: data/processed/hi/manifest.json
+  catalogue: data/processed/hi/catalogue.csv
