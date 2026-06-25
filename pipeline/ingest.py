@@ -70,7 +70,7 @@ def run(config: dict) -> Path:
             config.get("dataset_language_key", config["language"]),
             split=config.get("dataset_split", "train"),
             streaming=True,
-            trust_remote_code=True,
+            trust_remote_code=False,
         )
     except Exception as exc:
         # Some datasets don't use a language sub-config — fall back
@@ -79,7 +79,7 @@ def run(config: dict) -> Path:
             config["dataset"],
             split=config.get("dataset_split", "train"),
             streaming=True,
-            trust_remote_code=True,
+            trust_remote_code=False,
         )
 
     target_sr = config["sample_rate"]

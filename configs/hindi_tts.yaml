@@ -6,9 +6,9 @@ language: hi
 script: devanagari
 language_name: Hindi
 
-dataset: ai4bharat/IndicVoices-R
+dataset: ai4bharat/indicvoices_r
 dataset_split: train
-dataset_language_key: hi
+dataset_language_key: Hindi
 
 sample_rate: 22050                    # TTS typically uses higher sample rate than STT
 channels: 1

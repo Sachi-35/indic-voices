@@ -22,6 +22,17 @@ Output
   data/processed/<lang>/manifest.json
     Each line: {"audio_path": "...", "transcript": "...",
                 "duration": 4.2, "language": "hi", "align_score": 0.87}
+
+Resume behaviour
+-----------------
+  manifest.json is written INCREMENTALLY — one line per sample, flushed
+  to disk immediately. If the process is interrupted (Colab disconnect,
+  manual stop, crash), re-running this stage will:
+    - read whatever is already in manifest.json
+    - skip any audio_path already present there
+    - append only the remaining samples
+  This means it is always safe to stop and resume later without losing
+  progress or duplicating work.
 """
 
 import json
@@ -59,49 +70,80 @@ def run(config: dict) -> Path:
     logger.info(f"Output : {manifest_path}")
 
     rows = _read_catalogue(cleaned_catalogue)
-    logger.info(f"Samples to align: {len(rows)}")
+    logger.info(f"Samples in catalogue: {len(rows)}")
+
+    # --- Resume support: find out what's already been done -----------------
+    already_done = _read_existing_manifest_paths(manifest_path)
+    if already_done:
+        logger.info(
+            f"Found existing manifest with {len(already_done)} entries — "
+            f"these will be skipped."
+        )
+
+    rows_remaining = [r for r in rows if r["audio_path"] not in already_done]
+    skipped_already_done = len(rows) - len(rows_remaining)
+
+    logger.info(f"Already aligned   : {skipped_already_done}")
+    logger.info(f"Remaining to align: {len(rows_remaining)}")
+
+    if not rows_remaining:
+        logger.info("Nothing left to align — manifest is already complete.")
+        return manifest_path
 
     # Load WhisperX alignment model once (expensive to reload per sample)
     align_model, align_metadata, device = _load_align_model(config)
 
     min_score = float(config.get("min_alignment_score", 0.5))
-    manifest_rows = []
     dropped = 0
+    written = 0
 
-    for idx, row in enumerate(rows):
-        try:
-            score = _align_sample(
-                audio_path=row["audio_path"],
-                transcript=row["transcript"],
-                align_model=align_model,
-                align_metadata=align_metadata,
-                device=device,
-                config=config,
-            )
-        except Exception as exc:
-            logger.warning(f"Sample {idx} alignment failed: {exc}")
-            dropped += 1
-            continue
+    # Open manifest in APPEND mode — existing entries (if any) are preserved.
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(manifest_path, "a", encoding="utf-8") as f:
+        for idx, row in enumerate(rows_remaining):
+            try:
+                score = _align_sample(
+                    audio_path=row["audio_path"],
+                    transcript=row["transcript"],
+                    align_model=align_model,
+                    align_metadata=align_metadata,
+                    device=device,
+                    config=config,
+                )
+            except Exception as exc:
+                logger.warning(f"Sample {idx} alignment failed: {exc}")
+                dropped += 1
+                continue
 
-        if score < min_score:
-            logger.debug(f"Sample {idx} dropped: align_score {score:.3f} < {min_score}")
-            dropped += 1
-            continue
+            if score < min_score:
+                logger.debug(f"Sample {idx} dropped: align_score {score:.3f} < {min_score}")
+                dropped += 1
+                continue
 
-        manifest_rows.append({
-            "audio_path": row["audio_path"],
-            "transcript": row["transcript"],
-            "duration": float(row["duration"]),
-            "language": row["language"],
-            "align_score": round(score, 4),
-        })
+            entry = {
+                "audio_path": row["audio_path"],
+                "transcript": row["transcript"],
+                "duration": float(row["duration"]),
+                "language": row["language"],
+                "align_score": round(score, 4),
+            }
 
-        if (idx + 1) % 200 == 0:
-            logger.info(f"  Aligned {idx + 1}/{len(rows)}…")
+            # Write immediately and flush to disk — this is the key change.
+            # Even if the process is killed right after this line, the
+            # entry is already safely on disk in Drive.
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            f.flush()
+            written += 1
 
-    _write_manifest(manifest_rows, manifest_path)
-    logger.info(f"Manifest written : {manifest_path}  ({len(manifest_rows)} entries)")
-    logger.info(f"Dropped          : {dropped}")
+            if (idx + 1) % 200 == 0:
+                logger.info(f"  Aligned {idx + 1}/{len(rows_remaining)} this run "
+                            f"({written} written, {dropped} dropped)…")
+
+    total_in_manifest = skipped_already_done + written
+    logger.info(f"Manifest written : {manifest_path}  ({total_in_manifest} total entries)")
+    logger.info(f"  - from this run     : {written}")
+    logger.info(f"  - already done      : {skipped_already_done}")
+    logger.info(f"  - dropped this run  : {dropped}")
     return manifest_path
 
 
@@ -122,7 +164,7 @@ def _load_align_model(config: dict):
             "WhisperX is not installed. Run: pip install whisperx"
         ) from exc
 
-    device = "cuda" if __import__("torch").cuda.is_available() else "cpu"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     language = config.get("language", "hi")
     model_name = config.get(
         "alignment_model",
@@ -201,12 +243,29 @@ def _read_catalogue(path: Path) -> list[dict]:
         return list(csv.DictReader(f))
 
 
-def _write_manifest(rows: list[dict], path: Path):
+def _read_existing_manifest_paths(path: Path) -> set[str]:
     """
-    Write manifest as newline-delimited JSON (one JSON object per line).
-    This format is standard for audio training pipelines (NeMo, ESPnet, etc.)
+    Read an existing (possibly partial) manifest.json, if present,
+    and return the set of audio_path values already processed.
+    Used to support resuming an interrupted align run.
+
+    Tolerant of a trailing incomplete/corrupted last line (e.g. if the
+    process was killed mid-write) — that one line is simply skipped.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        for row in rows:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    if not path.exists():
+        return set()
+
+    done = set()
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+                done.add(entry["audio_path"])
+            except (json.JSONDecodeError, KeyError):
+                # Likely the last line, cut off mid-write. Skip it —
+                # that sample will simply be re-aligned this run.
+                continue
+    return done

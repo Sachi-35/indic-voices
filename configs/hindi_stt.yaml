@@ -10,9 +10,9 @@ script: devanagari                    # writing system
 language_name: Hindi                  # human-readable label
 
 # --- Data Source ---
-dataset: ai4bharat/IndicVoices-R      # HuggingFace dataset ID
+dataset: ai4bharat/indicvoices_r      # HuggingFace dataset ID
 dataset_split: train                  # which split to pull
-dataset_language_key: hi              # filter key inside the dataset
+dataset_language_key: Hindi              # filter key inside the dataset
 
 # --- Audio Standards ---
 sample_rate: 16000                    # Hz — Whisper expects 16kHz
