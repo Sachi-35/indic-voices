@@ -14,9 +14,25 @@ What this file does, in plain English:
 Output
 ------
   data/processed/<lang>/catalogue.csv
+
+Resume behaviour
+-----------------
+  catalogue.csv is written INCREMENTALLY — one row per sample, flushed to
+  disk immediately. If the process is interrupted, re-running this stage
+  will:
+    - read whatever rows already exist in catalogue.csv
+    - confirm the corresponding .wav file for each row still exists on disk
+      (rows whose file is missing, e.g. deleted by accident, are treated
+      as NOT done and will be re-processed)
+    - skip that many samples at the START of the streaming iterator
+      (streaming datasets can't be randomly seeked, so already-done
+      samples are still streamed past, just not re-saved/re-processed)
+    - append only new, valid rows from where it left off
+  This means it is safe to stop and resume later without losing progress,
+  and safe even if some already-downloaded .wav files were deleted —
+  those specific samples will simply be redone.
 """
 
-import os
 import csv
 import logging
 from pathlib import Path
@@ -59,6 +75,22 @@ def run(config: dict) -> Path:
     logger.info(f"Raw dir  : {raw_dir}")
 
     # ------------------------------------------------------------------
+    # 0. Resume support: check what's already validly done
+    # ------------------------------------------------------------------
+    existing_rows = _read_existing_catalogue(catalogue_path)
+    valid_existing_rows, n_missing_files = _filter_rows_with_valid_audio(existing_rows)
+
+    n_resume_skip = len(valid_existing_rows)
+
+    if existing_rows:
+        logger.info(
+            f"Found existing catalogue with {len(existing_rows)} rows "
+            f"({n_resume_skip} have valid audio on disk, "
+            f"{n_missing_files} are missing their .wav file and will be redone)."
+        )
+        logger.info(f"Will skip the first {n_resume_skip} samples in the stream.")
+
+    # ------------------------------------------------------------------
     # 1. Load dataset from HuggingFace
     #    streaming=True means it downloads one sample at a time — safe
     #    for large datasets on limited disk space.
@@ -83,38 +115,122 @@ def run(config: dict) -> Path:
         )
 
     target_sr = config["sample_rate"]
-    rows = []
 
     logger.info("Processing samples…")
-    for idx, sample in enumerate(dataset):
-        try:
-            audio_path, duration = _save_audio(sample, idx, raw_dir, target_sr)
-            transcript = _extract_transcript(sample)
 
-            if transcript is None:
-                logger.debug(f"Sample {idx}: no transcript found, skipping")
+    # Open catalogue in append mode. If we have valid existing rows, the
+    # file already contains them (header + N rows) — we just keep adding.
+    # If the catalogue doesn't exist yet, or had zero valid rows, we
+    # (re)write it fresh with a header first.
+    write_header = (n_resume_skip == 0)
+
+    n_new_rows = 0
+    n_skipped_in_stream = 0
+    next_index = n_resume_skip  # used to keep filenames unique/sequential
+
+    with open(catalogue_path, "a" if not write_header else "w",
+              newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f, fieldnames=["audio_path", "transcript", "duration", "language"]
+        )
+        if write_header:
+            writer.writeheader()
+
+        for idx, sample in enumerate(dataset):
+            # Skip samples already done in a previous run. We still have
+            # to iterate past them (streaming can't seek), but we don't
+            # redo any of the expensive save/resample work.
+            if idx < n_resume_skip:
+                n_skipped_in_stream += 1
                 continue
 
-            rows.append({
-                "audio_path": str(audio_path),
-                "transcript": transcript,
-                "duration": round(duration, 3),
-                "language": config["language"],
-            })
+            try:
+                audio_path, duration = _save_audio(sample, idx, raw_dir, target_sr)
+                transcript = _extract_transcript(sample)
 
-            if (idx + 1) % 500 == 0:
-                logger.info(f"  Processed {idx + 1} samples…")
+                if transcript is None:
+                    logger.debug(f"Sample {idx}: no transcript found, skipping")
+                    continue
 
-        except Exception as exc:
-            logger.warning(f"Sample {idx} failed: {exc}")
-            continue
+                row = {
+                    "audio_path": str(audio_path),
+                    "transcript": transcript,
+                    "duration": round(duration, 3),
+                    "language": config["language"],
+                }
 
-    # ------------------------------------------------------------------
-    # 2. Write catalogue CSV
-    # ------------------------------------------------------------------
-    _write_catalogue(rows, catalogue_path)
-    logger.info(f"Catalogue written → {catalogue_path}  ({len(rows)} rows)")
+                writer.writerow(row)
+                f.flush()
+                n_new_rows += 1
+                next_index = idx + 1
+
+                if (idx + 1) % 500 == 0:
+                    logger.info(f"  Processed {idx + 1} samples so far "
+                                f"({n_new_rows} new this run)…")
+
+            except Exception as exc:
+                logger.warning(f"Sample {idx} failed: {exc}")
+                continue
+
+    total_rows = n_resume_skip + n_new_rows
+    logger.info(f"Catalogue written → {catalogue_path}  ({total_rows} total rows)")
+    logger.info(f"  - already done (resumed)  : {n_resume_skip}")
+    logger.info(f"  - new this run            : {n_new_rows}")
     return catalogue_path
+
+
+# ---------------------------------------------------------------------------
+# Resume helpers
+# ---------------------------------------------------------------------------
+
+def _read_existing_catalogue(path: Path) -> list[dict]:
+    """
+    Read an existing (possibly partial) catalogue.csv, if present.
+    Returns a list of row dicts, in order. Tolerant of a missing file
+    (returns empty list).
+    """
+    if not path.exists():
+        return []
+
+    with open(path, newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+def _filter_rows_with_valid_audio(rows: list[dict]) -> tuple[list[dict], int]:
+    """
+    Given existing catalogue rows, check that each row's audio_path
+    still actually exists on disk (non-zero size). This handles the
+    case where .wav files were deleted (accidentally or otherwise)
+    after being logged — those rows should NOT be trusted as "done".
+
+    IMPORTANT: this function assumes existing rows are a contiguous
+    prefix of the dataset stream (sample_000000.wav, sample_000001.wav, …
+    with no gaps). If any row in the middle has a missing file, we treat
+    everything from that point onward as needing to be redone — this
+    keeps the "skip first N samples in the stream" resume logic simple
+    and correct. Trailing/scattered partial deletions are the expected
+    case (e.g. accidentally deleting just the tail of a folder); deletions
+    of files in the middle are less common but handled safely the same way.
+
+    Returns
+    -------
+    (valid_rows, n_missing) — valid_rows is the contiguous prefix that's
+    safe to resume from; n_missing is how many rows from that point on
+    were dropped because their file was missing.
+    """
+    valid_rows = []
+    for row in rows:
+        audio_path = Path(row["audio_path"])
+        if audio_path.exists() and audio_path.stat().st_size > 0:
+            valid_rows.append(row)
+        else:
+            # First missing file found — stop trusting the rest of the
+            # catalogue as "done", even if later files happen to still
+            # exist, to keep the resume index simple and correct.
+            break
+
+    n_missing = len(rows) - len(valid_rows)
+    return valid_rows, n_missing
 
 
 # ---------------------------------------------------------------------------
@@ -175,12 +291,3 @@ def _extract_transcript(sample: dict) -> str | None:
         if val and isinstance(val, str) and val.strip():
             return val.strip()
     return None
-
-
-def _write_catalogue(rows: list[dict], path: Path):
-    """Write list of dicts to a CSV file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["audio_path", "transcript", "duration", "language"])
-        writer.writeheader()
-        writer.writerows(rows)
