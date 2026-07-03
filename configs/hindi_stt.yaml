@@ -53,7 +53,7 @@ output_dir: /kaggle/working/models/hindi_stt
 # The manifest.json paths (e.g. data/raw/hi/sample_000000.wav) are automatically
 # remapped to /kaggle/input/indic-voices-hi/audio_chunk_00/sample_000000.wav.
 # COMMENT THIS LINE OUT when running on Colab/local (paths used as-is).
-kaggle_input_dir: /kaggle/input/indic-voices-hi
+kaggle_input_dir: /kaggle/input/datasets/sachi35/indicvoices-hindi-stage1
 
 training:
   num_train_epochs: 3
@@ -70,12 +70,12 @@ training:
   # Checkpoints are synced here after every save so you can resume across
   # Kaggle sessions. Points to Drive via the Kaggle-Drive integration,
   # or comment out if not using Drive backup.
-  drive_backup_dir: /kaggle/working/drive_backup/hindi_stt
+  kaggle_backup_dataset_id: sachi35/hindi-stt-checkpoints
 
 # --- Paths (relative to project root, used for ingest/clean/align stages) ---
 # On Kaggle for training, manifest is read from the mounted dataset.
 paths:
   raw_dir: data/raw/hi
   processed_dir: data/processed/hi
-  manifest: /kaggle/input/indic-voices-hi/manifest.json
+  manifest: data/processed/hi/manifest.json
   catalogue: data/processed/hi/catalogue.csv
