@@ -30,39 +30,67 @@ logger = logging.getLogger(__name__)
 # is actually available (see run() below). This keeps the top of the file
 # import-light.
 
-def _make_drive_backup_callback(TrainerCallback):
-    class DriveBackupCallback(TrainerCallback):
+def _make_kaggle_backup_callback(TrainerCallback):
+    class KaggleBackupCallback(TrainerCallback):
         """
-        After every checkpoint save, copies ONLY the newest checkpoint folder
-        to a Drive-backed path, deleting any previously synced checkpoint first.
-        This keeps Drive usage capped at ~1 checkpoint's worth of space, even
-        though training itself happens on fast local disk.
+        After every checkpoint save, pushes ONLY the newest checkpoint folder
+        as a new version of a Kaggle Dataset. This survives Kaggle session
+        wipes (unlike anything under /kaggle/working), letting training
+        resume across disconnects.
+
+        Requires KAGGLE_USERNAME / KAGGLE_KEY to be set in the environment
+        (e.g. loaded from Kaggle Secrets at the top of the notebook) and the
+        target dataset (kaggle_backup_dataset_id) to already exist.
         """
 
-        def __init__(self, local_output_dir: str, drive_backup_dir: str):
+        def __init__(self, local_output_dir: str, kaggle_backup_dataset_id: str):
             self.local_output_dir = local_output_dir
-            self.drive_backup_dir = drive_backup_dir
+            self.kaggle_backup_dataset_id = kaggle_backup_dataset_id
 
         def on_save(self, args, state, control, **kwargs):
             latest = _find_latest_checkpoint(self.local_output_dir)
             if not latest:
                 return control
 
-            Path(self.drive_backup_dir).mkdir(parents=True, exist_ok=True)
+            import json
+            import subprocess
 
-            # Remove any previously synced checkpoint(s) so Drive never
-            # accumulates more than one at a time.
-            for existing in Path(self.drive_backup_dir).glob("checkpoint-*"):
-                logger.info(f"Removing previous Drive-synced checkpoint: {existing}")
-                shutil.rmtree(existing, ignore_errors=True)
+            stage_dir = Path(self.local_output_dir) / "_kaggle_backup_stage"
+            if stage_dir.exists():
+                shutil.rmtree(stage_dir)
+            stage_dir.mkdir(parents=True)
 
-            dest = os.path.join(self.drive_backup_dir, os.path.basename(latest))
-            logger.info(f"Syncing latest checkpoint to Drive: {latest} -> {dest}")
+            dest = stage_dir / os.path.basename(latest)
+            logger.info(f"Staging checkpoint for Kaggle backup: {latest} -> {dest}")
             shutil.copytree(latest, dest)
+
+            metadata = {
+                "title": self.kaggle_backup_dataset_id.split("/")[-1],
+                "id": self.kaggle_backup_dataset_id,
+                "licenses": [{"name": "CC0-1.0"}],
+            }
+            (stage_dir / "dataset-metadata.json").write_text(json.dumps(metadata, indent=2))
+
+            step = state.global_step
+            result = subprocess.run(
+                [
+                    "kaggle", "datasets", "version",
+                    "-p", str(stage_dir),
+                    "-m", f"checkpoint at step {step}",
+                    "--dir-mode", "zip",
+                ],
+                capture_output=True, text=True,
+            )
+            if result.returncode != 0:
+                logger.warning(f"Kaggle backup FAILED at step {step}: {result.stderr}")
+            else:
+                logger.info(f"Kaggle backup succeeded at step {step}")
+
+            shutil.rmtree(stage_dir, ignore_errors=True)
 
             return control
 
-    return DriveBackupCallback
+    return KaggleBackupCallback
 
 
 # ─────────────────────────────────────────────
@@ -143,7 +171,7 @@ def run(config: dict) -> None:
     # save (older synced checkpoints are deleted first). Lets you train to fast
     # local disk while still having a resumable copy on persistent storage
     # (e.g. Google Drive) without accumulating multiple checkpoints there.
-    drive_backup_dir = train_cfg.get("drive_backup_dir", None)
+    kaggle_backup_dataset_id = train_cfg.get("kaggle_backup_dataset_id", None)
 
     logger.info(f"Base model  : {base_model}")
     logger.info(f"Manifest    : {manifest_path}")
@@ -241,10 +269,10 @@ def run(config: dict) -> None:
 
     # ── 9. Trainer ─────────────────────────────────────────────────────────
     callbacks = []
-    if drive_backup_dir:
-        DriveBackupCallback = _make_drive_backup_callback(TrainerCallback)
+    if kaggle_backup_dataset_id:
+        KaggleBackupCallback = _make_kaggle_backup_callback(TrainerCallback)
         callbacks.append(
-            DriveBackupCallback(local_output_dir=output_dir, drive_backup_dir=drive_backup_dir)
+            KaggleBackupCallback(local_output_dir=output_dir, kaggle_backup_dataset_id=kaggle_backup_dataset_id)
         )
 
     trainer = Seq2SeqTrainer(
@@ -263,14 +291,25 @@ def run(config: dict) -> None:
     # the Drive-backed copy (useful if local disk was wiped by a disconnect
     # but the Drive sync from a previous session is still there).
     resume_checkpoint = _find_latest_checkpoint(output_dir)
-    if not resume_checkpoint and drive_backup_dir:
-        drive_checkpoint = _find_latest_checkpoint(drive_backup_dir)
-        if drive_checkpoint:
-            logger.info(f"No local checkpoint found — restoring synced checkpoint from Drive: {drive_checkpoint}")
-            Path(output_dir).mkdir(parents=True, exist_ok=True)
-            restored_path = os.path.join(output_dir, os.path.basename(drive_checkpoint))
-            shutil.copytree(drive_checkpoint, restored_path)
-            resume_checkpoint = restored_path
+    if not resume_checkpoint and kaggle_backup_dataset_id:
+        import subprocess
+        logger.info(f"No local checkpoint found — attempting to restore from Kaggle backup dataset: {kaggle_backup_dataset_id}")
+        restore_dir = Path(output_dir) / "_kaggle_restore_stage"
+        restore_dir.mkdir(parents=True, exist_ok=True)
+        dl_result = subprocess.run(
+            ["kaggle", "datasets", "download", "-d", kaggle_backup_dataset_id, "-p", str(restore_dir), "--unzip"],
+            capture_output=True, text=True,
+        )
+        if dl_result.returncode != 0:
+            logger.warning(f"Kaggle backup restore failed (may not exist yet): {dl_result.stderr}")
+        else:
+            restored_checkpoint = _find_latest_checkpoint(str(restore_dir))
+            if restored_checkpoint:
+                dest = os.path.join(output_dir, os.path.basename(restored_checkpoint))
+                shutil.move(restored_checkpoint, dest)
+                resume_checkpoint = dest
+                logger.info(f"Restored checkpoint from Kaggle backup: {dest}")
+        shutil.rmtree(restore_dir, ignore_errors=True)
 
     if resume_checkpoint:
         logger.info(f"Found existing checkpoint — resuming from {resume_checkpoint}")
@@ -287,18 +326,29 @@ def run(config: dict) -> None:
     # If we were syncing checkpoints to Drive during training, replace that
     # checkpoint copy with the final model instead (final model has no
     # optimizer state, so it's smaller — no need to keep the mid-training copy).
-    if drive_backup_dir:
-        final_drive_path = os.path.join(drive_backup_dir, "final_model")
-        logger.info(f"Copying final model to Drive: {final_drive_path}")
-        Path(drive_backup_dir).mkdir(parents=True, exist_ok=True)
-
-        for existing in Path(drive_backup_dir).glob("checkpoint-*"):
-            shutil.rmtree(existing, ignore_errors=True)
-        if os.path.exists(final_drive_path):
-            shutil.rmtree(final_drive_path)
-
-        shutil.copytree(output_dir, final_drive_path, ignore=shutil.ignore_patterns("checkpoint-*"))
-        logger.info(f"Final model safely backed up to: {final_drive_path}")
+    if kaggle_backup_dataset_id:
+        import json, subprocess
+        logger.info(f"Pushing final model to Kaggle backup dataset: {kaggle_backup_dataset_id}")
+        stage_dir = Path(output_dir) / "_kaggle_final_stage"
+        if stage_dir.exists():
+            shutil.rmtree(stage_dir)
+        stage_dir.mkdir(parents=True)
+        shutil.copytree(output_dir, stage_dir / "final_model", ignore=shutil.ignore_patterns("checkpoint-*", "_kaggle_*"))
+        metadata = {
+            "title": kaggle_backup_dataset_id.split("/")[-1],
+            "id": kaggle_backup_dataset_id,
+            "licenses": [{"name": "CC0-1.0"}],
+        }
+        (stage_dir / "dataset-metadata.json").write_text(json.dumps(metadata, indent=2))
+        result = subprocess.run(
+            ["kaggle", "datasets", "version", "-p", str(stage_dir), "-m", "final model", "--dir-mode", "zip"],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            logger.warning(f"Final model Kaggle backup FAILED: {result.stderr}")
+        else:
+            logger.info("Final model safely backed up to Kaggle dataset")
+        shutil.rmtree(stage_dir, ignore_errors=True)
 
     logger.info("=== train.py complete ===")
     logger.info(f"Fine-tuned weights saved to: {output_dir}")
@@ -359,26 +409,33 @@ def _load_manifest(manifest_path: str) -> List[Dict[str, Any]]:
     return records
 
 
-def _remap_audio_path(audio_path: str, kaggle_input_dir: str) -> str:
+def _build_audio_path_index(kaggle_input_dir: str) -> Dict[str, str]:
     """
-    Remap a manifest audio_path to the correct location on Kaggle.
-
-    Audio was uploaded as chunked zips (audio_chunk_00.zip, audio_chunk_01.zip, ...)
-    with chunk_size=2000. Kaggle auto-extracts each zip into a subfolder named
-    after the zip, so the final path looks like:
-        /kaggle/input/indic-voices-hi/audio_chunk_00/sample_000000.wav
-
-    The sample index embedded in the filename determines which chunk it belongs to.
+    Scan all data_raw_hi_* folders under kaggle_input_dir and build a
+    filename -> full_path lookup. Built once per run, not per-sample,
+    because folders are NOT sequential 2000-file chunks (verified: sample
+    indices are scattered non-contiguously across data_raw_hi_1..4), so
+    index arithmetic cannot be used to locate a file.
     """
-    filename = Path(audio_path).name          # e.g. sample_000006.wav
-    try:
-        idx = int(filename.replace("sample_", "").replace(".wav", ""))
-    except ValueError:
-        raise ValueError(f"Cannot parse sample index from filename: {filename}")
+    index = {}
+    base = Path(kaggle_input_dir)
+    folders = sorted(base.glob("data_raw_hi_*/hi"))
+    for folder in folders:
+        for wav_file in folder.glob("*.wav"):
+            index[wav_file.name] = str(wav_file)
+    logger.info(f"Built audio path index: {len(index)} files across {len(folders)} folders")
+    return index
 
-    chunk_num = idx // 2000                   # chunk_size=2000, same as upload
-    chunk_folder = f"audio_chunk_{chunk_num:02d}"
-    return str(Path(kaggle_input_dir) / chunk_folder / filename)
+
+def _remap_audio_path(audio_path: str, audio_index: Dict[str, str]) -> str:
+    """
+    Remap a manifest audio_path to its actual location on Kaggle using
+    a pre-built filename -> path index.
+    """
+    filename = Path(audio_path).name
+    if filename not in audio_index:
+        raise FileNotFoundError(f"{filename} not found in any data_raw_hi_* folder")
+    return audio_index[filename]
 
 
 def _train_eval_split(
@@ -415,10 +472,12 @@ def _build_hf_dataset(
     import soundfile as sf
     from datasets import Dataset
 
+    audio_index = _build_audio_path_index(kaggle_input_dir) if kaggle_input_dir else None
+
     def _process(record):
         # Remap path for Kaggle if needed, otherwise use as-is
-        if kaggle_input_dir:
-            audio_path = _remap_audio_path(record["audio_path"], kaggle_input_dir)
+        if audio_index is not None:
+            audio_path = _remap_audio_path(record["audio_path"], audio_index)
         else:
             audio_path = record["audio_path"]
 
