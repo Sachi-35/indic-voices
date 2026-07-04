@@ -282,7 +282,7 @@ def run(config: dict) -> None:
         eval_dataset=eval_dataset,
         data_collator=collator,
         compute_metrics=compute_metrics,
-        tokenizer=processor.feature_extractor,
+        processing_class=processor.feature_extractor,
         callbacks=callbacks,
     )
 
