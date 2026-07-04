@@ -210,8 +210,10 @@ def run(config: dict) -> None:
 
     logger.info(f"Loading model from {base_model} …")
     model = WhisperForConditionalGeneration.from_pretrained(base_model)
-    model.config.forced_decoder_ids = None       # let the tokenizer handle language forcing
-    model.config.suppress_tokens = []
+    # transformers 5.x: these must live on model.generation_config, not model.config —
+    # setting them on model.config raises a ValueError at generate() time during eval.
+    model.generation_config.forced_decoder_ids = None
+    model.generation_config.suppress_tokens = []
 
     if grad_checkpointing:
         model.config.use_cache = False           # required when gradient checkpointing is on
