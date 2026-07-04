@@ -508,8 +508,11 @@ def _build_hf_dataset(
             "labels": labels,
         }
 
-    processed = [_process(r) for r in records]
-    return Dataset.from_list(processed)
+    def _generator():
+        for r in records:
+            yield _process(r)
+
+    return Dataset.from_generator(_generator)
 
 
 # ─────────────────────────────────────────────
