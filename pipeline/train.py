@@ -297,6 +297,8 @@ def run(config: dict) -> None:
         import subprocess
         logger.info(f"No local checkpoint found — attempting to restore from Kaggle backup dataset: {kaggle_backup_dataset_id}")
         restore_dir = Path(output_dir) / "_kaggle_restore_stage"
+        if restore_dir.exists():
+            shutil.rmtree(restore_dir)
         restore_dir.mkdir(parents=True, exist_ok=True)
         dl_result = subprocess.run(
             ["kaggle", "datasets", "download", "-d", kaggle_backup_dataset_id, "-p", str(restore_dir), "--unzip"],
@@ -305,13 +307,41 @@ def run(config: dict) -> None:
         if dl_result.returncode != 0:
             logger.warning(f"Kaggle backup restore failed (may not exist yet): {dl_result.stderr}")
         else:
+            # Kaggle dataset downloads land as a FLAT file list (no checkpoint-<N>
+            # subfolder), even though the backup callback zipped a checkpoint-<N>
+            # folder. _find_latest_checkpoint() only matches subdirectories, so it
+            # would silently return None here. First try the subdirectory case
+            # (in case Kaggle's zip behavior changes), then fall back to treating
+            # restore_dir itself as a flat checkpoint and renaming it using the
+            # global_step recorded in its own trainer_state.json.
             restored_checkpoint = _find_latest_checkpoint(str(restore_dir))
+            if not restored_checkpoint:
+                state_path = restore_dir / "trainer_state.json"
+                if state_path.exists():
+                    with open(state_path) as f:
+                        state = json.load(f)
+                    step = state.get("global_step")
+                    if step is not None:
+                        restored_checkpoint = str(restore_dir)
+                        restored_name = f"checkpoint-{step}"
+                    else:
+                        logger.warning("trainer_state.json in Kaggle backup has no global_step — cannot restore")
+                        restored_checkpoint = None
+                else:
+                    logger.warning(f"No checkpoint subfolder and no trainer_state.json found in Kaggle backup at {restore_dir}")
+                    restored_checkpoint = None
+            else:
+                restored_name = os.path.basename(restored_checkpoint)
+
             if restored_checkpoint:
-                dest = os.path.join(output_dir, os.path.basename(restored_checkpoint))
+                dest = os.path.join(output_dir, restored_name)
+                if os.path.exists(dest):
+                    shutil.rmtree(dest)
                 shutil.move(restored_checkpoint, dest)
                 resume_checkpoint = dest
                 logger.info(f"Restored checkpoint from Kaggle backup: {dest}")
-        shutil.rmtree(restore_dir, ignore_errors=True)
+        if restore_dir.exists():
+            shutil.rmtree(restore_dir, ignore_errors=True)
 
     if resume_checkpoint:
         logger.info(f"Found existing checkpoint — resuming from {resume_checkpoint}")
