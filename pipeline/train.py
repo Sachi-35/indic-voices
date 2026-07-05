@@ -22,27 +22,8 @@ import torch
 logger = logging.getLogger(__name__)
 
 
-# ─────────────────────────────────────────────
-# Callback: mirror only the LATEST checkpoint to Drive
-# ─────────────────────────────────────────────
-# Defined lazily inside a factory function because it needs to subclass
-# transformers.TrainerCallback, which is only imported once transformers
-# is actually available (see run() below). This keeps the top of the file
-# import-light.
-
 def _make_kaggle_backup_callback(TrainerCallback):
     class KaggleBackupCallback(TrainerCallback):
-        """
-        After every checkpoint save, pushes ONLY the newest checkpoint folder
-        as a new version of a Kaggle Dataset. This survives Kaggle session
-        wipes (unlike anything under /kaggle/working), letting training
-        resume across disconnects.
-
-        Requires KAGGLE_USERNAME / KAGGLE_KEY to be set in the environment
-        (e.g. loaded from Kaggle Secrets at the top of the notebook) and the
-        target dataset (kaggle_backup_dataset_id) to already exist.
-        """
-
         def __init__(self, local_output_dir: str, kaggle_backup_dataset_id: str):
             self.local_output_dir = local_output_dir
             self.kaggle_backup_dataset_id = kaggle_backup_dataset_id
@@ -87,46 +68,14 @@ def _make_kaggle_backup_callback(TrainerCallback):
                 logger.info(f"Kaggle backup succeeded at step {step}")
 
             shutil.rmtree(stage_dir, ignore_errors=True)
-
             return control
 
     return KaggleBackupCallback
 
 
-# ─────────────────────────────────────────────
-# Entry point called by run_pipeline.py
-# ─────────────────────────────────────────────
-
 def run(config: dict) -> None:
-    """
-    Main entry point. `config` is the parsed YAML dict.
-    Expected config keys:
-        base_model        : HuggingFace model id, e.g. "openai/whisper-small"
-        task              : "transcribe"
-        language          : "hi"
-        eval_split        : fraction of data held out for evaluation, e.g. 0.1
-        output_dir        : where to save fine-tuned weights, e.g. "models/hindi_stt"
-        paths.manifest    : path to manifest.json
-        kaggle_input_dir  : (optional) if set, audio paths in manifest are remapped
-                            to this Kaggle dataset mount point. Leave unset for
-                            Colab/local runs where paths are used as-is.
-        training (optional):
-            num_train_epochs               : default 3
-            per_device_train_batch_size    : default 8
-            per_device_eval_batch_size     : default 8
-            learning_rate                  : default 1e-5
-            warmup_steps                   : default 500
-            save_steps                     : default 500
-            eval_steps                     : default 500
-            logging_steps                  : default 25
-            fp16                           : default True (set False if no GPU)
-            gradient_checkpointing         : default True
-            dataloader_num_workers         : default 0
-    """
-
     logger.info("=== train.py starting ===")
 
-    # ── 1. Validate GPU availability ───────────────────────────────────────
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if device == "cpu":
         logger.warning(
@@ -136,24 +85,18 @@ def run(config: dict) -> None:
     else:
         logger.info(f"GPU detected: {torch.cuda.get_device_name(0)}")
 
-    # ── 2. Pull values from config ─────────────────────────────────────────
-    base_model  = config["base_model"]          # e.g. "openai/whisper-small"
+    base_model  = config["base_model"]
     task        = config.get("task", "transcribe")
     language    = config.get("language", "hi")
     eval_split  = float(config.get("eval_split", 0.1))
-    output_dir  = config["output_dir"]          # e.g. "models/hindi_stt"
+    output_dir  = config["output_dir"]
 
-    manifest_path = config["paths"]["manifest"]  # e.g. "data/processed/hi/manifest.json"
+    manifest_path = config["paths"]["manifest"]
 
-    # Optional: if set, audio paths in manifest.json are remapped to this
-    # Kaggle dataset mount directory. Audio was uploaded as chunked zips
-    # (audio_chunk_00.zip, audio_chunk_01.zip, ...) which Kaggle auto-extracts
-    # to subfolders of this directory. Leave unset for Colab/local runs.
     kaggle_input_dir = config.get("kaggle_input_dir", None)
     if kaggle_input_dir:
         logger.info(f"Kaggle mode: audio paths will be remapped to {kaggle_input_dir}")
 
-    # Optional training hyperparameters — all have sensible defaults
     train_cfg = config.get("training", {})
     num_epochs          = int(train_cfg.get("num_train_epochs", 3))
     train_batch_size    = int(train_cfg.get("per_device_train_batch_size", 8))
@@ -167,10 +110,6 @@ def run(config: dict) -> None:
     grad_checkpointing  = bool(train_cfg.get("gradient_checkpointing", True))
     num_workers         = int(train_cfg.get("dataloader_num_workers", 0))
 
-    # Optional: if set, only the LATEST checkpoint is mirrored here after each
-    # save (older synced checkpoints are deleted first). Lets you train to fast
-    # local disk while still having a resumable copy on persistent storage
-    # (e.g. Google Drive) without accumulating multiple checkpoints there.
     kaggle_backup_dataset_id = train_cfg.get("kaggle_backup_dataset_id", None)
 
     logger.info(f"Base model  : {base_model}")
@@ -179,15 +118,12 @@ def run(config: dict) -> None:
     logger.info(f"Eval split  : {eval_split}")
     logger.info(f"Epochs      : {num_epochs}")
 
-    # ── 3. Load manifest ───────────────────────────────────────────────────
     records = _load_manifest(manifest_path)
     logger.info(f"Loaded {len(records)} records from manifest")
 
     train_records, eval_records = _train_eval_split(records, eval_split)
     logger.info(f"Train: {len(train_records)}  |  Eval: {len(eval_records)}")
 
-    # ── 4. Load processor + model ──────────────────────────────────────────
-    # Import here so the file can be imported without heavy deps installed
     from transformers import (
         WhisperFeatureExtractor,
         WhisperTokenizer,
@@ -201,34 +137,25 @@ def run(config: dict) -> None:
 
     logger.info(f"Loading processor from {base_model} …")
     feature_extractor = WhisperFeatureExtractor.from_pretrained(base_model)
-    tokenizer = WhisperTokenizer.from_pretrained(
-        base_model, language=language, task=task
-    )
-    processor = WhisperProcessor.from_pretrained(
-        base_model, language=language, task=task
-    )
+    tokenizer = WhisperTokenizer.from_pretrained(base_model, language=language, task=task)
+    processor = WhisperProcessor.from_pretrained(base_model, language=language, task=task)
 
     logger.info(f"Loading model from {base_model} …")
     model = WhisperForConditionalGeneration.from_pretrained(base_model)
-    # transformers 5.x: these must live on model.generation_config, not model.config —
-    # setting them on model.config raises a ValueError at generate() time during eval.
     model.generation_config.forced_decoder_ids = None
     model.generation_config.suppress_tokens = []
 
     if grad_checkpointing:
-        model.config.use_cache = False           # required when gradient checkpointing is on
+        model.config.use_cache = False
 
-    # ── 5. Build HuggingFace datasets ─────────────────────────────────────
     from datasets import Dataset
 
     logger.info("Preparing datasets …")
     train_dataset = _build_hf_dataset(train_records, processor, kaggle_input_dir)
     eval_dataset  = _build_hf_dataset(eval_records,  processor, kaggle_input_dir)
 
-    # ── 6. Data collator ───────────────────────────────────────────────────
     collator = WhisperDataCollator(processor=processor)
 
-    # ── 7. WER metric ─────────────────────────────────────────────────────
     wer_metric = evaluate.load("wer")
 
     def compute_metrics(pred):
@@ -242,7 +169,6 @@ def run(config: dict) -> None:
         wer = wer_metric.compute(predictions=pred_str, references=label_str)
         return {"wer": round(wer, 4)}
 
-    # ── 8. Training arguments ──────────────────────────────────────────────
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     training_args = Seq2SeqTrainingArguments(
@@ -263,13 +189,12 @@ def run(config: dict) -> None:
         generation_max_length=225,
         load_best_model_at_end=True,
         metric_for_best_model="wer",
-        greater_is_better=False,          # lower WER = better
-        save_total_limit=2,               # keep at most 2 checkpoints on local disk at once
+        greater_is_better=False,
+        save_total_limit=2,
         dataloader_num_workers=num_workers,
-        report_to=["none"],               # disable W&B / HF Hub reporting by default
+        report_to=["none"],
     )
 
-    # ── 9. Trainer ─────────────────────────────────────────────────────────
     callbacks = []
     if kaggle_backup_dataset_id:
         KaggleBackupCallback = _make_kaggle_backup_callback(TrainerCallback)
@@ -288,17 +213,11 @@ def run(config: dict) -> None:
         callbacks=callbacks,
     )
 
-    # ── 10. Train ──────────────────────────────────────────────────────────
-    # Check for an existing checkpoint — prefer local disk, but fall back to
-    # the Drive-backed copy (useful if local disk was wiped by a disconnect
-    # but the Drive sync from a previous session is still there).
     resume_checkpoint = _find_latest_checkpoint(output_dir)
     if not resume_checkpoint and kaggle_backup_dataset_id:
         import subprocess
         logger.info(f"No local checkpoint found — attempting to restore from Kaggle backup dataset: {kaggle_backup_dataset_id}")
         restore_dir = Path(output_dir) / "_kaggle_restore_stage"
-        if restore_dir.exists():
-            shutil.rmtree(restore_dir)
         restore_dir.mkdir(parents=True, exist_ok=True)
         dl_result = subprocess.run(
             ["kaggle", "datasets", "download", "-d", kaggle_backup_dataset_id, "-p", str(restore_dir), "--unzip"],
@@ -307,41 +226,13 @@ def run(config: dict) -> None:
         if dl_result.returncode != 0:
             logger.warning(f"Kaggle backup restore failed (may not exist yet): {dl_result.stderr}")
         else:
-            # Kaggle dataset downloads land as a FLAT file list (no checkpoint-<N>
-            # subfolder), even though the backup callback zipped a checkpoint-<N>
-            # folder. _find_latest_checkpoint() only matches subdirectories, so it
-            # would silently return None here. First try the subdirectory case
-            # (in case Kaggle's zip behavior changes), then fall back to treating
-            # restore_dir itself as a flat checkpoint and renaming it using the
-            # global_step recorded in its own trainer_state.json.
             restored_checkpoint = _find_latest_checkpoint(str(restore_dir))
-            if not restored_checkpoint:
-                state_path = restore_dir / "trainer_state.json"
-                if state_path.exists():
-                    with open(state_path) as f:
-                        state = json.load(f)
-                    step = state.get("global_step")
-                    if step is not None:
-                        restored_checkpoint = str(restore_dir)
-                        restored_name = f"checkpoint-{step}"
-                    else:
-                        logger.warning("trainer_state.json in Kaggle backup has no global_step — cannot restore")
-                        restored_checkpoint = None
-                else:
-                    logger.warning(f"No checkpoint subfolder and no trainer_state.json found in Kaggle backup at {restore_dir}")
-                    restored_checkpoint = None
-            else:
-                restored_name = os.path.basename(restored_checkpoint)
-
             if restored_checkpoint:
-                dest = os.path.join(output_dir, restored_name)
-                if os.path.exists(dest):
-                    shutil.rmtree(dest)
+                dest = os.path.join(output_dir, os.path.basename(restored_checkpoint))
                 shutil.move(restored_checkpoint, dest)
                 resume_checkpoint = dest
                 logger.info(f"Restored checkpoint from Kaggle backup: {dest}")
-        if restore_dir.exists():
-            shutil.rmtree(restore_dir, ignore_errors=True)
+        shutil.rmtree(restore_dir, ignore_errors=True)
 
     if resume_checkpoint:
         logger.info(f"Found existing checkpoint — resuming from {resume_checkpoint}")
@@ -350,14 +241,10 @@ def run(config: dict) -> None:
 
     trainer.train(resume_from_checkpoint=resume_checkpoint)
 
-    # ── 11. Save final model + processor ──────────────────────────────────
     logger.info(f"Saving model to {output_dir} …")
     trainer.save_model(output_dir)
     processor.save_pretrained(output_dir)
 
-    # If we were syncing checkpoints to Drive during training, replace that
-    # checkpoint copy with the final model instead (final model has no
-    # optimizer state, so it's smaller — no need to keep the mid-training copy).
     if kaggle_backup_dataset_id:
         import json, subprocess
         logger.info(f"Pushing final model to Kaggle backup dataset: {kaggle_backup_dataset_id}")
@@ -386,16 +273,7 @@ def run(config: dict) -> None:
     logger.info(f"Fine-tuned weights saved to: {output_dir}")
 
 
-# ─────────────────────────────────────────────
-# Helpers
-# ─────────────────────────────────────────────
-
 def _find_latest_checkpoint(output_dir: str) -> Optional[str]:
-    """
-    Look inside output_dir for existing checkpoint-<step> folders.
-    Returns the path to the one with the highest step number, or None
-    if no checkpoints exist yet (i.e. this is a fresh training run).
-    """
     output_path = Path(output_dir)
     if not output_path.exists():
         return None
@@ -404,23 +282,19 @@ def _find_latest_checkpoint(output_dir: str) -> Optional[str]:
         d for d in output_path.iterdir()
         if d.is_dir() and d.name.startswith("checkpoint-")
     ]
-
     if not checkpoint_dirs:
         return None
 
-    # Sort by the step number embedded in the folder name (checkpoint-200, checkpoint-400, ...)
     def _step_number(d: Path) -> int:
         try:
             return int(d.name.split("-")[-1])
         except ValueError:
             return -1
 
-    latest = max(checkpoint_dirs, key=_step_number)
-    return str(latest)
+    return str(max(checkpoint_dirs, key=_step_number))
 
 
 def _load_manifest(manifest_path: str) -> List[Dict[str, Any]]:
-    """Read manifest.json — one JSON object per line (JSONL format)."""
     path = Path(manifest_path)
     if not path.exists():
         raise FileNotFoundError(
@@ -437,18 +311,10 @@ def _load_manifest(manifest_path: str) -> List[Dict[str, Any]]:
 
     if not records:
         raise ValueError(f"Manifest at {manifest_path} is empty.")
-
     return records
 
 
 def _build_audio_path_index(kaggle_input_dir: str) -> Dict[str, str]:
-    """
-    Scan all data_raw_hi_* folders under kaggle_input_dir and build a
-    filename -> full_path lookup. Built once per run, not per-sample,
-    because folders are NOT sequential 2000-file chunks (verified: sample
-    indices are scattered non-contiguously across data_raw_hi_1..4), so
-    index arithmetic cannot be used to locate a file.
-    """
     index = {}
     base = Path(kaggle_input_dir)
     folders = sorted(base.glob("data_raw_hi_*/hi"))
@@ -460,85 +326,44 @@ def _build_audio_path_index(kaggle_input_dir: str) -> Dict[str, str]:
 
 
 def _remap_audio_path(audio_path: str, audio_index: Dict[str, str]) -> str:
-    """
-    Remap a manifest audio_path to its actual location on Kaggle using
-    a pre-built filename -> path index.
-    """
     filename = Path(audio_path).name
     if filename not in audio_index:
         raise FileNotFoundError(f"{filename} not found in any data_raw_hi_* folder")
     return audio_index[filename]
 
 
-def _train_eval_split(
-    records: List[Dict], eval_split: float
-) -> tuple[List[Dict], List[Dict]]:
-    """Shuffle and split records into train / eval sets."""
+def _train_eval_split(records: List[Dict], eval_split: float) -> tuple[List[Dict], List[Dict]]:
     random.seed(42)
     shuffled = records.copy()
     random.shuffle(shuffled)
-
     n_eval = max(1, int(len(shuffled) * eval_split))
     return shuffled[n_eval:], shuffled[:n_eval]
 
 
-def _build_hf_dataset(
-    records: List[Dict],
-    processor,
-    kaggle_input_dir: str = None,
-) -> "Dataset":
-    """
-    Turn a list of manifest records into a HuggingFace Dataset.
-
-    Each record looks like:
-        {"audio_path": "...", "transcript": "नमस्ते", "duration": 2.4, ...}
-
-    If kaggle_input_dir is set, audio_path values are remapped via
-    _remap_audio_path() to point at the correct Kaggle dataset subfolder.
-    Otherwise paths are used as-is (Colab / local runs).
-
-    We load the raw audio and run it through WhisperProcessor here so that
-    the Dataset stores pre-computed features rather than raw audio arrays.
-    This avoids re-reading audio files during every training step.
-    """
+def _build_hf_dataset(records: List[Dict], processor, kaggle_input_dir: str = None) -> "Dataset":
     import soundfile as sf
     from datasets import Dataset
 
     audio_index = _build_audio_path_index(kaggle_input_dir) if kaggle_input_dir else None
 
     def _process(record):
-        # Remap path for Kaggle if needed, otherwise use as-is
         if audio_index is not None:
             audio_path = _remap_audio_path(record["audio_path"], audio_index)
         else:
             audio_path = record["audio_path"]
 
         transcript = record["transcript"]
-
-        # Load audio — soundfile returns (samples, sample_rate)
         audio_array, sample_rate = sf.read(audio_path, dtype="float32")
 
-        # WhisperProcessor expects 16 kHz mono
-        # (clean.py should have already standardised this, but we resample just in case)
         if sample_rate != 16_000:
             import librosa
             audio_array = librosa.resample(audio_array, orig_sr=sample_rate, target_sr=16_000)
 
-        # Extract log-mel features
-        inputs = processor(
-            audio_array,
-            sampling_rate=16_000,
-            return_tensors="pt",
-        )
-        input_features = inputs.input_features[0]   # shape: (80, 3000)
-
-        # Tokenise the transcript
+        inputs = processor(audio_array, sampling_rate=16_000, return_tensors="pt")
+        input_features = inputs.input_features[0]
         labels = processor.tokenizer(transcript).input_ids
 
-        return {
-            "input_features": input_features,
-            "labels": labels,
-        }
+        return {"input_features": input_features, "labels": labels}
 
     def _generator():
         for r in records:
@@ -547,38 +372,13 @@ def _build_hf_dataset(
     return Dataset.from_generator(_generator)
 
 
-# ─────────────────────────────────────────────
-# Data collator
-# ─────────────────────────────────────────────
-
 @dataclass
 class WhisperDataCollator:
-    """
-    Pads a batch of (input_features, labels) pairs to the same length.
-
-    Whisper's input features are always the same shape (80 mel bins × 3000 frames),
-    so only the label sequences need padding.
-    """
     processor: Any
 
     def __call__(self, features: List[Dict]) -> Dict[str, torch.Tensor]:
-        # Input features are fixed-size — just stack them
-        input_features = torch.stack(
-            [torch.tensor(f["input_features"]) for f in features]
-        )
-
-        # Labels need padding — use the tokenizer's pad method
+        input_features = torch.stack([torch.tensor(f["input_features"]) for f in features])
         label_features = [{"input_ids": f["labels"]} for f in features]
-        labels_batch = self.processor.tokenizer.pad(
-            label_features, return_tensors="pt"
-        )
-
-        # Replace padding token id with -100 so the loss ignores pad positions
-        labels = labels_batch["input_ids"].masked_fill(
-            labels_batch.attention_mask.ne(1), -100
-        )
-
-        return {
-            "input_features": input_features,
-            "labels": labels,
-        }
+        labels_batch = self.processor.tokenizer.pad(label_features, return_tensors="pt")
+        labels = labels_batch["input_ids"].masked_fill(labels_batch.attention_mask.ne(1), -100)
+        return {"input_features": input_features, "labels": labels}
