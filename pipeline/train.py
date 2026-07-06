@@ -41,9 +41,18 @@ def _make_kaggle_backup_callback(TrainerCallback):
                 shutil.rmtree(stage_dir)
             stage_dir.mkdir(parents=True)
 
-            dest = stage_dir / os.path.basename(latest)
-            logger.info(f"Staging checkpoint for Kaggle backup: {latest} -> {dest}")
-            shutil.copytree(latest, dest)
+            checkpoint_name = os.path.basename(latest)
+
+            # Zip the checkpoint folder ourselves, preserving its name as the
+            # top-level entry inside the archive. This avoids Kaggle's
+            # --dir-mode zip silently flattening the folder contents.
+            archive_base = str(stage_dir / checkpoint_name)
+            shutil.make_archive(
+                archive_base, "zip",
+                root_dir=os.path.dirname(latest),
+                base_dir=checkpoint_name,
+            )
+            logger.info(f"Zipped checkpoint for Kaggle backup: {latest} -> {archive_base}.zip")
 
             metadata = {
                 "title": self.kaggle_backup_dataset_id.split("/")[-1],
@@ -58,7 +67,7 @@ def _make_kaggle_backup_callback(TrainerCallback):
                     "kaggle", "datasets", "version",
                     "-p", str(stage_dir),
                     "-m", f"checkpoint at step {step}",
-                    "--dir-mode", "zip",
+                    "--dir-mode", "skip",
                 ],
                 capture_output=True, text=True,
             )
@@ -382,3 +391,33 @@ class WhisperDataCollator:
         labels_batch = self.processor.tokenizer.pad(label_features, return_tensors="pt")
         labels = labels_batch["input_ids"].masked_fill(labels_batch.attention_mask.ne(1), -100)
         return {"input_features": input_features, "labels": labels}
+
+
+def restore_latest_checkpoint_from_kaggle(output_dir: str, kaggle_backup_dataset_id: str):
+    """Downloads and restores the latest checkpoint zip from the Kaggle backup dataset."""
+    import zipfile
+    import glob
+    import subprocess
+
+    inspect_dir = "/kaggle/working/_checkpoint_restore"
+    os.makedirs(inspect_dir, exist_ok=True)
+
+    subprocess.run([
+        "kaggle", "datasets", "download",
+        "-d", kaggle_backup_dataset_id,
+        "-p", inspect_dir,
+        "--unzip",
+    ], check=True)
+
+    zips = glob.glob(os.path.join(inspect_dir, "checkpoint-*.zip"))
+    if not zips:
+        logger.info("No checkpoint zip found in backup dataset — nothing to restore.")
+        return None
+
+    latest_zip = max(zips, key=lambda p: int(os.path.basename(p).split("-")[1].split(".")[0]))
+    with zipfile.ZipFile(latest_zip) as zf:
+        zf.extractall(output_dir)
+
+    step_name = os.path.basename(latest_zip).replace(".zip", "")
+    logger.info(f"Restored {step_name} into {output_dir}")
+    return os.path.join(output_dir, step_name)
