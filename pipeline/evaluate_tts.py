@@ -12,15 +12,15 @@ def main():
     with open(CONFIG_PATH) as f:
         cfg = yaml.safe_load(f)
 
-    tts_model = ParlerTTSForConditionalGeneration.from_pretrained(cfg["training"]["output_dir"])
-    prompt_tok = AutoTokenizer.from_pretrained(cfg["model"]["prompt_tokenizer"])
-    desc_tok = AutoTokenizer.from_pretrained(cfg["model"]["description_tokenizer"])
+    tts_model = ParlerTTSForConditionalGeneration.from_pretrained(cfg["output_dir"])
+    prompt_tok = AutoTokenizer.from_pretrained(cfg["prompt_tokenizer"])
+    desc_tok = AutoTokenizer.from_pretrained(cfg["description_tokenizer"])
 
     stt_checkpoint = cfg["evaluation"]["stt_reference_model"]
     stt_processor = WhisperProcessor.from_pretrained(stt_checkpoint)
     stt_model = WhisperForConditionalGeneration.from_pretrained(stt_checkpoint)
 
-    with open(cfg["data"]["manifest_path"]) as f:
+    with open(cfg["paths"]["manifest"]) as f:
         records = json.load(f)
 
     n = cfg["evaluation"]["num_intelligibility_samples"]
@@ -31,7 +31,7 @@ def main():
         prompt_ids = prompt_tok(r["text"], return_tensors="pt").input_ids
         audio_arr = tts_model.generate(input_ids=desc_ids, prompt_input_ids=prompt_ids).cpu().numpy().squeeze()
 
-        inputs = stt_processor(audio_arr, sampling_rate=44100, return_tensors="pt")
+        inputs = stt_processor(audio_arr, sampling_rate=cfg["sample_rate"], return_tensors="pt")
         pred_ids = stt_model.generate(inputs["input_features"])
         transcription = stt_processor.batch_decode(pred_ids, skip_special_tokens=True)[0]
 
@@ -45,7 +45,7 @@ def main():
         desc_ids = desc_tok(r["description"], return_tensors="pt").input_ids
         prompt_ids = prompt_tok(r["text"], return_tensors="pt").input_ids
         audio_arr = tts_model.generate(input_ids=desc_ids, prompt_input_ids=prompt_ids).cpu().numpy().squeeze()
-        sf.write(f"outputs/mos_clips/clip_{i}.wav", audio_arr, 44100)
+        sf.write(f"outputs/mos_clips/clip_{i}.wav", audio_arr, cfg["sample_rate"])
 
     results = {
         "intelligibility_wer": intelligibility_wer,

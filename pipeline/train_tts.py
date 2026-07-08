@@ -11,11 +11,11 @@ def main():
     with open(CONFIG_PATH) as f:
         cfg = yaml.safe_load(f)
 
-    model = ParlerTTSForConditionalGeneration.from_pretrained(cfg["model"]["base_model"])
-    prompt_tokenizer = AutoTokenizer.from_pretrained(cfg["model"]["prompt_tokenizer"])
-    description_tokenizer = AutoTokenizer.from_pretrained(cfg["model"]["description_tokenizer"])
+    model = ParlerTTSForConditionalGeneration.from_pretrained(cfg["base_model"])
+    prompt_tokenizer = AutoTokenizer.from_pretrained(cfg["prompt_tokenizer"])
+    description_tokenizer = AutoTokenizer.from_pretrained(cfg["description_tokenizer"])
 
-    with open(cfg["data"]["manifest_path"]) as f:
+    with open(cfg["paths"]["manifest"]) as f:
         records = json.load(f)
 
     def process(r):
@@ -28,25 +28,26 @@ def main():
         }
 
     dataset = build_streaming_dataset(records, process)
-    split = dataset.train_test_split(test_size=0.1, seed=42)
+    split = dataset.train_test_split(test_size=cfg["eval_split"], seed=42)
 
     checkpoint = find_latest_checkpoint(
-        cfg["training"]["output_dir"],
+        cfg["output_dir"],
         cfg["backup"]["kaggle_dataset"],
         "downloaded_checkpoints",
     )
 
+    t = cfg["training"]
     args = TrainingArguments(
-        output_dir=cfg["training"]["output_dir"],
-        per_device_train_batch_size=cfg["training"]["per_device_train_batch_size"],
-        per_device_eval_batch_size=cfg["training"]["per_device_eval_batch_size"],
-        gradient_accumulation_steps=cfg["training"]["gradient_accumulation_steps"],
-        learning_rate=cfg["training"]["learning_rate"],
-        num_train_epochs=cfg["training"]["num_train_epochs"],
-        save_steps=cfg["training"]["save_steps"],
-        eval_steps=cfg["training"]["eval_steps"],
+        output_dir=cfg["output_dir"],
+        per_device_train_batch_size=t["per_device_train_batch_size"],
+        per_device_eval_batch_size=t["per_device_eval_batch_size"],
+        gradient_accumulation_steps=t["gradient_accumulation_steps"],
+        learning_rate=t["learning_rate"],
+        num_train_epochs=t["num_train_epochs"],
+        save_steps=t["save_steps"],
+        eval_steps=t["eval_steps"],
         eval_strategy="steps",
-        logging_steps=cfg["training"]["logging_steps"],
+        logging_steps=t["logging_steps"],
     )
 
     trainer = Trainer(
@@ -54,7 +55,7 @@ def main():
         args=args,
         train_dataset=split["train"],
         eval_dataset=split["test"],
-        callbacks=[KaggleBackupCallback(cfg["backup"]["kaggle_dataset"], cfg["training"]["output_dir"])],
+        callbacks=[KaggleBackupCallback(cfg["backup"]["kaggle_dataset"], cfg["output_dir"])],
     )
 
     trainer.train(resume_from_checkpoint=checkpoint)
