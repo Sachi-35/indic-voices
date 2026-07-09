@@ -15,7 +15,7 @@ dataset_language_key: Hindi          # TODO: verify exact key — run
                                       # load_dataset("ai4bharat/indicvoices_r").keys()
                                       # once and confirm it's "Hindi" not "hindi"
 
-speaker_filter: null                 # set after Kaggle pass 1 (single-voice fine-tuning
+speaker_filter: "S4259529700390036132"               # set after Kaggle pass 1 (single-voice fine-tuning
                                       # needs exactly one speaker_id here)
 
 # ------------------------------------------------------------
