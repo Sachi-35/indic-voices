@@ -6,7 +6,7 @@ dataset: ai4bharat/indicvoices_r
 dataset_split: train
 dataset_language_key: Hindi          # confirm via Cell 5 — try "hindi" lowercase if this errors
 
-speaker_filter: null                 # set after speaker-ranking step, then pushed to main
+speaker_filter: "S4259529700390036132"               # set after speaker-ranking step, then pushed to main
 
 sample_rate: 44100                   # Parler-TTS's DAC codec (ylacombe/dac_44khz) requires this
 channels: 1
