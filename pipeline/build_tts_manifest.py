@@ -14,6 +14,7 @@ def main():
         cfg["dataset"],
         cfg["dataset_language_key"],
         split=cfg["dataset_split"],
+        streaming=True,          # <-- the fix: avoids the ~47GB full-split download/cache
     )
 
     speaker_filter = cfg["speaker_filter"]
@@ -33,7 +34,12 @@ def main():
     min_dur, max_dur = cfg["min_duration"], cfg["max_duration"]
 
     manifest = []
+    seen_count = 0
     for row in ds:
+        seen_count += 1
+        if seen_count % 5000 == 0:
+            print(f"scanned {seen_count} rows, matched {len(manifest)} so far")
+
         if row["speaker_id"] != speaker_filter:
             continue
         dur = row["audio"]["array"].shape[-1] / row["audio"]["sampling_rate"]
@@ -54,7 +60,7 @@ def main():
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
 
-    print(f"Wrote {len(manifest)} rows to {manifest_path}")
+    print(f"Wrote {len(manifest)} rows to {manifest_path} (scanned {seen_count} total rows)")
 
 
 if __name__ == "__main__":

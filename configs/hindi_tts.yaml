@@ -1,68 +1,33 @@
-# ============================================================
-# Hindi TTS Pipeline Config
-# ============================================================
-
 language: hi
 script: devanagari
 language_name: Hindi
 
-# ------------------------------------------------------------
-# Dataset
-# ------------------------------------------------------------
 dataset: ai4bharat/indicvoices_r
 dataset_split: train
-dataset_language_key: Hindi          # TODO: verify exact key — run
-                                      # load_dataset("ai4bharat/indicvoices_r").keys()
-                                      # once and confirm it's "Hindi" not "hindi"
+dataset_language_key: Hindi          # confirm via Cell 5 — try "hindi" lowercase if this errors
 
-speaker_filter: "S4259529700390036132"               # set after Kaggle pass 1 (single-voice fine-tuning
-                                      # needs exactly one speaker_id here)
+speaker_filter: null                 # set after speaker-ranking step, then pushed to main
 
-# ------------------------------------------------------------
-# Audio
-# ------------------------------------------------------------
-sample_rate: 44100                   # corrected from 22050 — Parler-TTS's DAC codec
-                                      # (ylacombe/dac_44khz) expects 44.1kHz, not the
-                                      # 22050 typical of VITS/FastPitch-style TTS
+sample_rate: 44100                   # Parler-TTS's DAC codec (ylacombe/dac_44khz) requires this
 channels: 1
 audio_format: wav
 
-min_duration: 2.0                    # tightened from 1.0 — sub-2s clips give the
-                                      # description-conditioned model too little to learn from
-max_duration: 15.0                   # tightened from 20.0 — keeps batches memory-manageable
-                                      # on Kaggle's T4/P100; loosen later if VRAM allows
+min_duration: 2.0
+max_duration: 15.0
 min_rms_db: -40.0
 
-# ------------------------------------------------------------
-# Text cleaning
-# ------------------------------------------------------------
 remove_empty_transcripts: true
 normalize_numerals: true
 strip_extra_whitespace: true
 
-# NOTE: alignment_model/min_alignment_score/align_batch_size from the STT config are
-# intentionally dropped here — those exist because raw long-form STT audio needs
-# forced alignment (WhisperX) to chunk it. IndicVoices-R already ships pre-segmented,
-# single-utterance (audio, transcript) pairs, so there's nothing to align. If you ever
-# ingest raw unsegmented audio for TTS later, this block would need to come back.
-
-# ------------------------------------------------------------
-# Parler-TTS specific — required, has no STT equivalent
-# ------------------------------------------------------------
 description_template: >
   A female speaker delivers her words in a clear, moderate-pace voice in a quiet, close-sounding recording.
 description_tokenizer: google/flan-t5-large
 prompt_tokenizer: ai4bharat/indic-parler-tts
 
-# ------------------------------------------------------------
-# Model / task
-# ------------------------------------------------------------
 base_model: ai4bharat/indic-parler-tts
 task: tts
 
-# ------------------------------------------------------------
-# Training
-# ------------------------------------------------------------
 eval_split: 0.1
 output_dir: models/hindi_tts
 
@@ -76,25 +41,15 @@ training:
   eval_steps: 500
   logging_steps: 50
 
-# ------------------------------------------------------------
-# Checkpoint backup (mirrors STT's KaggleBackupCallback pattern)
-# ------------------------------------------------------------
 backup:
   kaggle_dataset: sachi35/hindi-tts-checkpoints
 
-# ------------------------------------------------------------
-# Evaluation
-# ------------------------------------------------------------
 evaluation:
-  stt_reference_model: vasista22/whisper-hindi-large-v2   # public model — decoupled from
-                                                            # your teammate's in-progress checkpoint
+  stt_reference_model: vasista22/whisper-hindi-large-v2
   num_intelligibility_samples: 50
   num_mos_samples: 15
   metrics_output: outputs/hindi_tts_metrics.json
 
-# ------------------------------------------------------------
-# Paths
-# ------------------------------------------------------------
 paths:
   raw_dir: data/raw/hi_tts
   processed_dir: data/processed/hi_tts
