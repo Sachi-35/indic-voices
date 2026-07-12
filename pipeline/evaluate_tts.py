@@ -1,3 +1,7 @@
+import os
+os.environ["USE_TF"] = "0"
+os.environ["USE_FLAX"] = "0"
+
 import json
 import yaml
 import jiwer

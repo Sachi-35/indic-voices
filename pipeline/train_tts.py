@@ -1,8 +1,13 @@
+import os
+os.environ["USE_TF"] = "0"
+os.environ["USE_FLAX"] = "0"
+
 import yaml
 import json
 from transformers import Trainer, TrainingArguments, AutoTokenizer
 from parler_tts import ParlerTTSForConditionalGeneration
 from pipeline.kaggle_utils_tts import KaggleBackupCallback, find_latest_checkpoint, build_streaming_dataset
+
 
 CONFIG_PATH = "configs/hindi_tts.yaml"
 
