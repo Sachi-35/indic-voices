@@ -1,6 +1,7 @@
 import os
 os.environ["USE_TF"] = "0"
 os.environ["USE_FLAX"] = "0"
+os.environ["WANDB_DISABLED"] = "true"
 
 import yaml
 import json
