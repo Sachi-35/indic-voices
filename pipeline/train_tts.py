@@ -6,11 +6,11 @@ os.environ["WANDB_DISABLED"] = "true"
 import yaml
 import json
 import torch
-import soundfile as sf
+import librosa
 from dataclasses import dataclass
 from typing import List, Dict
 from transformers import Trainer, TrainingArguments, AutoTokenizer
-from parler_tts import ParlerTTSForConditionalGeneration
+from parler_tts import ParlerTTSForConditionalGeneration, build_delay_pattern_mask
 from pipeline.kaggle_utils_tts import KaggleBackupCallback, find_latest_checkpoint, build_streaming_dataset
 
 CONFIG_PATH = "configs/hindi_tts.yaml"
@@ -20,37 +20,62 @@ CONFIG_PATH = "configs/hindi_tts.yaml"
 class TTSDataCollator:
     prompt_tokenizer: AutoTokenizer
     description_tokenizer: AutoTokenizer
+    label_pad_token_id: int = -100
 
     def __call__(self, features: List[Dict]) -> Dict[str, torch.Tensor]:
-        prompt_ids = [f["prompt_input_ids"] for f in features]
-        description_ids = [f["description_input_ids"] for f in features]
-
         prompt_batch = self.prompt_tokenizer.pad(
-            {"input_ids": prompt_ids}, return_tensors="pt", padding=True
+            {"input_ids": [f["prompt_input_ids"] for f in features]},
+            return_tensors="pt", padding=True,
         )
         description_batch = self.description_tokenizer.pad(
-            {"input_ids": description_ids}, return_tensors="pt", padding=True
+            {"input_ids": [f["description_input_ids"] for f in features]},
+            return_tensors="pt", padding=True,
         )
 
-        batch = {
+        labels = [f["labels"] for f in features]
+        max_len = max(l.shape[-1] for l in labels)
+        padded_labels = torch.stack([
+            torch.nn.functional.pad(l, (0, max_len - l.shape[-1]), value=self.label_pad_token_id)
+            for l in labels
+        ])
+
+        return {
             "prompt_input_ids": prompt_batch["input_ids"],
             "prompt_attention_mask": prompt_batch["attention_mask"],
             "input_ids": description_batch["input_ids"],
             "attention_mask": description_batch["attention_mask"],
+            "labels": padded_labels,
         }
 
-        # TODO — Problem 2: pad/stack "labels" (audio codec tokens) here too.
-        # Needs the audio-encoding step verified against your installed
-        # parler_tts version's exact API before this is safe to fill in.
-        labels = [f["labels"] for f in features]
-        max_len = max(l.shape[-1] for l in labels)
-        padded = torch.stack([
-            torch.nn.functional.pad(l, (0, max_len - l.shape[-1]), value=-100)
-            for l in labels
-        ])
-        batch["labels"] = padded
 
-        return batch
+def precompute_audio_labels(records, model, sample_rate, num_codebooks, bos_token_id, pad_token_id, eos_token_id):
+    model.audio_encoder.eval()
+    labels_by_index = []
+    with torch.no_grad():
+        for i, r in enumerate(records):
+            audio, _ = librosa.load(r["audio_path"], sr=sample_rate, mono=True)
+            input_values = torch.tensor(audio, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+
+            encoder_out = model.audio_encoder.encode(input_values)
+            codes = encoder_out.audio_codes.squeeze(0)
+
+            seq_len = codes.shape[-1]
+            _, delay_pattern_mask = build_delay_pattern_mask(
+                codes,
+                bos_token_id=bos_token_id,
+                pad_token_id=pad_token_id,
+                max_length=seq_len + num_codebooks - 1,
+                num_codebooks=num_codebooks,
+            )
+            labels = torch.where(delay_pattern_mask == -1, eos_token_id, delay_pattern_mask)
+            labels_by_index.append(labels)
+
+            if i == 0:
+                print(f"[precompute] example 0 — codes: {codes.shape}, labels: {labels.shape}")
+            if (i + 1) % 20 == 0:
+                print(f"[precompute] encoded {i + 1}/{len(records)}")
+
+    return labels_by_index
 
 
 def main():
@@ -64,24 +89,26 @@ def main():
     with open(cfg["paths"]["manifest"]) as f:
         records = json.load(f)
 
-    def process(r):
+    dcfg = model.decoder.config
+    print(f"[main] num_codebooks={dcfg.num_codebooks}, bos={dcfg.bos_token_id}, "
+          f"eos={dcfg.eos_token_id}, pad={dcfg.pad_token_id}")
+
+    audio_labels = precompute_audio_labels(
+        records, model, cfg["sample_rate"],
+        dcfg.num_codebooks, dcfg.bos_token_id, dcfg.pad_token_id, dcfg.eos_token_id,
+    )
+
+    def process(indexed_r):
+        idx, r = indexed_r
         prompt_ids = prompt_tokenizer(r["text"], return_tensors="pt").input_ids[0]
         description_ids = description_tokenizer(r["description"], return_tensors="pt").input_ids[0]
-
-        # TODO — Problem 2: load r["audio_path"], resample to cfg["sample_rate"],
-        # encode via model.audio_encoder, apply build_delay_pattern_mask.
-        # Placeholder below WILL produce a working batch shape but meaningless
-        # labels — do not start a real training run until this is filled in.
-        audio, sr = sf.read(r["audio_path"])
-        labels = torch.zeros(model.decoder.config.num_codebooks, 50, dtype=torch.long)  # PLACEHOLDER
-
         return {
             "prompt_input_ids": prompt_ids,
             "description_input_ids": description_ids,
-            "labels": labels,
+            "labels": audio_labels[idx],
         }
 
-    dataset = build_streaming_dataset(records, process)
+    dataset = build_streaming_dataset(list(enumerate(records)), process)
     split = dataset.train_test_split(test_size=cfg["eval_split"], seed=42)
 
     checkpoint = find_latest_checkpoint(
