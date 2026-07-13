@@ -33,6 +33,7 @@ class TTSDataCollator:
         )
 
         labels = [f["labels"] for f in features]
+        labels = [l if torch.is_tensor(l) else torch.as_tensor(l, dtype=torch.long) for l in labels]
         max_len = max(l.shape[-1] for l in labels)
         padded_labels = torch.stack([
             torch.nn.functional.pad(l, (0, max_len - l.shape[-1]), value=self.label_pad_token_id)
