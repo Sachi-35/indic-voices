@@ -127,6 +127,7 @@ def main():
         eval_steps=t["eval_steps"],
         eval_strategy="steps",
         logging_steps=t["logging_steps"],
+        remove_unused_columns=False,
     )
 
     trainer = Trainer(
