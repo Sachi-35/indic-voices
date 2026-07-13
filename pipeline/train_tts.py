@@ -34,9 +34,9 @@ class TTSDataCollator:
 
         labels = [f["labels"] for f in features]
         labels = [l if torch.is_tensor(l) else torch.as_tensor(l, dtype=torch.long) for l in labels]
-        max_len = max(l.shape[-1] for l in labels)
+        max_len = max(l.shape[0] for l in labels)  # seq_len is now dim 0
         padded_labels = torch.stack([
-            torch.nn.functional.pad(l, (0, max_len - l.shape[-1]), value=self.label_pad_token_id)
+            torch.nn.functional.pad(l, (0, 0, 0, max_len - l.shape[0]), value=self.label_pad_token_id)
             for l in labels
         ])
 
@@ -69,6 +69,7 @@ def precompute_audio_labels(records, model, sample_rate, num_codebooks, bos_toke
                 num_codebooks=num_codebooks,
             )
             labels = torch.where(delay_pattern_mask == -1, eos_token_id, delay_pattern_mask)
+            labels = labels.transpose(0, 1)  # (num_codebooks, seq_len) -> (seq_len, num_codebooks), required by model
             labels_by_index.append(labels)
 
             if i == 0:
