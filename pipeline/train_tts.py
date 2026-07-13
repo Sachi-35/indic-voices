@@ -2,6 +2,7 @@ import os
 os.environ["USE_TF"] = "0"
 os.environ["USE_FLAX"] = "0"
 os.environ["WANDB_DISABLED"] = "true"
+os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
 import yaml
 import json
@@ -130,6 +131,8 @@ def main():
         eval_strategy="steps",
         logging_steps=t["logging_steps"],
         remove_unused_columns=False,
+        fp16=True,
+        gradient_checkpointing=True,
     )
 
     trainer = Trainer(

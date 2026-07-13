@@ -32,9 +32,10 @@ eval_split: 0.1
 output_dir: models/hindi_tts
 
 training:
-  per_device_train_batch_size: 4
-  per_device_eval_batch_size: 4
-  gradient_accumulation_steps: 4
+  training:
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 16
   learning_rate: 5.0e-5
   num_train_epochs: 3
   save_steps: 500
