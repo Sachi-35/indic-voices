@@ -1,6 +1,8 @@
 import os
+os.environ["HF_HUB_DISABLE_XET"] = "1"
 os.environ["USE_TF"] = "0"
 os.environ["USE_FLAX"] = "0"
+os.environ["WANDB_DISABLED"] = "true"
 
 import json
 import yaml

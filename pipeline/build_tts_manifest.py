@@ -1,5 +1,7 @@
-import json
 import os
+os.environ["HF_HUB_DISABLE_XET"] = "1"
+
+import json
 import yaml
 import soundfile as sf
 from datasets import load_dataset
