@@ -86,6 +86,17 @@ def main():
         cfg = yaml.safe_load(f)
 
     model = ParlerTTSForConditionalGeneration.from_pretrained(cfg["base_model"])
+
+    # Freeze text encoder + audio encoder — only fine-tune the decoder.
+    # This is standard Parler-TTS practice and cuts Adam optimizer-state memory substantially.
+    for p in model.text_encoder.parameters():
+        p.requires_grad = False
+    for p in model.audio_encoder.parameters():
+        p.requires_grad = False
+    n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    n_total = sum(p.numel() for p in model.parameters())
+    print(f"[main] trainable params: {n_trainable:,} / {n_total:,}")
+
     prompt_tokenizer = AutoTokenizer.from_pretrained(cfg["prompt_tokenizer"])
     description_tokenizer = AutoTokenizer.from_pretrained(cfg["description_tokenizer"])
 
