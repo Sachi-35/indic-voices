@@ -4,6 +4,8 @@ os.environ["USE_TF"] = "0"
 os.environ["USE_FLAX"] = "0"
 os.environ["WANDB_DISABLED"] = "true"
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # batch size is 1 — DataParallel across 2 GPUs adds only gradient-sync overhead, no real parallelism
+
 
 import yaml
 import json
