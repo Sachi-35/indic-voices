@@ -40,7 +40,7 @@ training:
   num_train_epochs: 3
   save_steps: 500
   eval_steps: 500
-  logging_steps: 50
+  logging_steps: 1
 
 backup:
   kaggle_dataset: sachi35/hindi-tts-checkpoints
