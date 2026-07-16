@@ -145,7 +145,7 @@ def main():
         eval_strategy="steps",
         logging_steps=t["logging_steps"],
         remove_unused_columns=False,
-        fp16=True,
+        fp16=False,
         gradient_checkpointing=True,
     )
 
