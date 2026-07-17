@@ -38,10 +38,17 @@ def main():
     n = cfg["evaluation"]["num_intelligibility_samples"]
     refs, hyps = [], []
 
-    for r in records[:n]:
+    for i, r in enumerate(records[:n]):
+        print(f"[eval] generating sample {i+1}/{n}...", flush=True)
         desc_ids = desc_tok(r["description"], return_tensors="pt").input_ids
         prompt_ids = prompt_tok(r["text"], return_tensors="pt").input_ids
-        audio_arr = tts_model.generate(input_ids=desc_ids, prompt_input_ids=prompt_ids).cpu().numpy().squeeze()
+        audio_arr = tts_model.generate(
+            input_ids=desc_ids,
+            prompt_input_ids=prompt_ids,
+            max_new_tokens=1000,
+            use_cache=True,
+        ).cpu().numpy().squeeze()
+        print(f"[eval] sample {i+1}/{n} done, shape={audio_arr.shape}", flush=True)
 
         # Whisper requires 16kHz input; our TTS output is generated at cfg["sample_rate"] (44100 for the DAC codec)
         audio_arr_16k = librosa.resample(audio_arr, orig_sr=cfg["sample_rate"], target_sr=16000)
