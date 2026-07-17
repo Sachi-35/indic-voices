@@ -27,6 +27,11 @@ def main():
     stt_processor = WhisperProcessor.from_pretrained(stt_checkpoint)
     stt_model = WhisperForConditionalGeneration.from_pretrained(stt_checkpoint)
 
+    # Known issue with vasista22/whisper-* checkpoints: generation_config.suppress_tokens is empty,
+    # which crashes newer transformers' generate() at suppress_tokens[-2]. Setting prev_sot_token_id
+    # directly avoids that broken fallback path.
+    stt_model.generation_config.prev_sot_token_id = stt_model.generation_config.decoder_start_token_id
+
     with open(cfg["paths"]["manifest"]) as f:
         records = json.load(f)
 
