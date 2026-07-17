@@ -1,3 +1,4 @@
+import librosa
 import os
 os.environ["HF_HUB_DISABLE_XET"] = "1"
 os.environ["USE_TF"] = "0"
@@ -37,7 +38,9 @@ def main():
         prompt_ids = prompt_tok(r["text"], return_tensors="pt").input_ids
         audio_arr = tts_model.generate(input_ids=desc_ids, prompt_input_ids=prompt_ids).cpu().numpy().squeeze()
 
-        inputs = stt_processor(audio_arr, sampling_rate=cfg["sample_rate"], return_tensors="pt")
+        # Whisper requires 16kHz input; our TTS output is generated at cfg["sample_rate"] (44100 for the DAC codec)
+        audio_arr_16k = librosa.resample(audio_arr, orig_sr=cfg["sample_rate"], target_sr=16000)
+        inputs = stt_processor(audio_arr_16k, sampling_rate=16000, return_tensors="pt")
         pred_ids = stt_model.generate(inputs["input_features"])
         transcription = stt_processor.batch_decode(pred_ids, skip_special_tokens=True)[0]
 
