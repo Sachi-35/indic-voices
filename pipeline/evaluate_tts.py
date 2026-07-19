@@ -15,6 +15,29 @@ from parler_tts import ParlerTTSForConditionalGeneration
 CONFIG_PATH = "configs/hindi_tts.yaml"
 PROGRESS_PATH = "outputs/eval_intelligibility_progress.jsonl"
 
+import subprocess
+
+def backup_progress():
+    github_token = os.environ.get("GITHUB_TOKEN", "")
+    if not github_token:
+        print("[eval] GITHUB_TOKEN not set, skipping backup", flush=True)
+        return
+    try:
+        subprocess.run(
+            ["git", "remote", "set-url", "origin",
+             f"https://Sachi-35:{github_token}@github.com/Sachi-35/indic-voices.git"],
+            check=True,
+        )
+        subprocess.run(["git", "add", "-f", PROGRESS_PATH], check=True)
+        result = subprocess.run(["git", "commit", "-m", "progress checkpoint"], capture_output=True, text=True)
+        if result.returncode != 0 and "nothing to commit" not in result.stdout:
+            print(f"[eval] git commit issue: {result.stdout}", flush=True)
+        subprocess.run(["git", "push"], check=True)
+        print("[eval] progress backed up to git", flush=True)
+    except subprocess.CalledProcessError as e:
+        print(f"[eval] progress backup failed (continuing anyway): {e}", flush=True)
+
+
 
 def load_progress():
     completed = {}
@@ -84,6 +107,9 @@ def main():
             progress_f.write(json.dumps(row, ensure_ascii=False) + "\n")
             progress_f.flush()
             completed[i] = row
+
+            if (i + 1) % 5 == 0:
+                backup_progress()
 
     refs = [completed[i]["ref"] for i in range(n)]
     hyps = [completed[i]["hyp"] for i in range(n)]
