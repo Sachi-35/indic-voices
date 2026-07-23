@@ -17,25 +17,29 @@ PROGRESS_PATH = "outputs/eval_intelligibility_progress.jsonl"
 
 import subprocess
 
-def backup_progress():
+def backup_progress(paths=None, label="progress"):
     github_token = os.environ.get("GITHUB_TOKEN", "")
     if not github_token:
         print("[eval] GITHUB_TOKEN not set, skipping backup", flush=True)
         return
+    if paths is None:
+        paths = [PROGRESS_PATH]
     try:
         subprocess.run(
             ["git", "remote", "set-url", "origin",
              f"https://Sachi-35:{github_token}@github.com/Sachi-35/indic-voices.git"],
             check=True,
         )
-        subprocess.run(["git", "add", "-f", PROGRESS_PATH], check=True)
-        result = subprocess.run(["git", "commit", "-m", "progress checkpoint"], capture_output=True, text=True)
+        for p in paths:
+            if os.path.exists(p):
+                subprocess.run(["git", "add", "-f", p], check=True)
+        result = subprocess.run(["git", "commit", "-m", f"{label} checkpoint"], capture_output=True, text=True)
         if result.returncode != 0 and "nothing to commit" not in result.stdout:
             print(f"[eval] git commit issue: {result.stdout}", flush=True)
         subprocess.run(["git", "push"], check=True)
-        print("[eval] progress backed up to git", flush=True)
+        print(f"[eval] {label} backed up to git", flush=True)
     except subprocess.CalledProcessError as e:
-        print(f"[eval] progress backup failed (continuing anyway): {e}", flush=True)
+        print(f"[eval] {label} backup failed (continuing anyway): {e}", flush=True)
 
 
 
@@ -116,8 +120,10 @@ def main():
     intelligibility_wer = jiwer.wer(refs, hyps)
 
     mos_n = cfg["evaluation"]["num_mos_samples"]
+    mos_clip_paths = []
     for i, r in enumerate(records[:mos_n]):
         out_path = f"outputs/mos_clips/clip_{i}.wav"
+        mos_clip_paths.append(out_path)
         if os.path.exists(out_path):
             print(f"[eval] MOS clip {i+1}/{mos_n} already exists, skipping", flush=True)
             continue
@@ -132,6 +138,9 @@ def main():
         ).cpu().numpy().squeeze()
         sf.write(out_path, audio_arr, cfg["sample_rate"])
 
+        if (i + 1) % 5 == 0:
+            backup_progress(paths=mos_clip_paths, label="mos_clips")
+
     results = {
         "intelligibility_wer": intelligibility_wer,
         "intelligibility_reference_model": stt_checkpoint,
@@ -141,6 +150,8 @@ def main():
     }
     with open(cfg["evaluation"]["metrics_output"], "w") as f:
         json.dump(results, f, indent=2)
+
+    backup_progress(paths=[cfg["evaluation"]["metrics_output"]] + mos_clip_paths, label="final_metrics")
 
     print(results)
 
