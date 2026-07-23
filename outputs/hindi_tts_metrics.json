@@ -1,0 +1,7 @@
+{
+  "intelligibility_wer": 0.34578696343402227,
+  "intelligibility_reference_model": "vasista22/whisper-hindi-large-v2",
+  "num_intelligibility_samples": 50,
+  "mos_clips_dir": "outputs/mos_clips",
+  "mos_score": null
+}
