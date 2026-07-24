@@ -28,6 +28,13 @@
 - MOS score requires a human listening panel; clips are generated and ready,
   but scoring has not yet been conducted.
 
+## Packaging / Export
+ONNX export was attempted and failed:
+
+> The checkpoint you are trying to load has model type `parler_tts` but Transformers does not recognize this architecture. This could be because of an issue with the checkpoint, or because your version of Transformers is out of date.
+
+This occurs because Parler-TTS is a custom architecture not registered in optimum's ONNX exporter config registry (not native to `transformers`), so no export config exists for it out of the box. Combined with the decoder's autoregressive generation loop, ONNX export is not expected to work without writing a custom optimum export config for this architecture. Fallback: model saved in standard HF format at `outputs/packaged_hf/` — usable directly with `transformers`/`parler-tts`, just not ONNX Runtime.
+
 ## Notes
 Config-driven pipeline — adding a new language requires only a new YAML config,
 no code changes to this evaluation or model card generation logic.

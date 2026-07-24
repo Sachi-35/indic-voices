@@ -2,11 +2,16 @@ import yaml
 import json
 import os
 
-def generate_model_card(config_path, metrics_path, output_path):
+def generate_model_card(config_path, metrics_path, output_path, packaging_path=None):
     with open(config_path) as f:
         cfg = yaml.safe_load(f)
     with open(metrics_path) as f:
         metrics = json.load(f)
+
+    packaging = None
+    if packaging_path and os.path.exists(packaging_path):
+        with open(packaging_path) as f:
+            packaging = json.load(f)
 
     wer = metrics.get("wer")
     cer = metrics.get("cer")
@@ -14,6 +19,23 @@ def generate_model_card(config_path, metrics_path, output_path):
     mos_score = metrics.get("mos_score")
     mos_display = "not yet scored (clips generated, human panel pending)" if mos_score is None else str(mos_score)
     rtf_flag = " ⚠️ above real-time target of 1.0" if (rtf is not None and rtf > 1.0) else ""
+
+    if packaging is None:
+        packaging_section = "Packaging step not yet run."
+    elif packaging.get("onnx_export_succeeded"):
+        packaging_section = "ONNX export succeeded. See `outputs/onnx_export/`."
+    else:
+        packaging_section = (
+            f"ONNX export was attempted and failed:\n\n"
+            f"> {packaging.get('onnx_error', 'unknown error')}\n\n"
+            f"This occurs because Parler-TTS is a custom architecture not registered "
+            f"in optimum's ONNX exporter config registry (not native to `transformers`), "
+            f"so no export config exists for it out of the box. Combined with the "
+            f"decoder's autoregressive generation loop, ONNX export is not expected to "
+            f"work without writing a custom optimum export config for this architecture. "
+            f"Fallback: model saved in standard HF format at `outputs/packaged_hf/` — "
+            f"usable directly with `transformers`/`parler-tts`, just not ONNX Runtime."
+        )
 
     card = f"""# Hindi TTS Model Card
 
@@ -45,6 +67,9 @@ def generate_model_card(config_path, metrics_path, output_path):
 - MOS score requires a human listening panel; clips are generated and ready,
   but scoring has not yet been conducted.
 
+## Packaging / Export
+{packaging_section}
+
 ## Notes
 Config-driven pipeline — adding a new language requires only a new YAML config,
 no code changes to this evaluation or model card generation logic.
@@ -58,4 +83,5 @@ if __name__ == "__main__":
         "configs/hindi_tts.yaml",
         "outputs/hindi_tts_metrics.json",
         "outputs/hindi_tts_model_card.md",
+        packaging_path="outputs/packaging_result.json",
     )
