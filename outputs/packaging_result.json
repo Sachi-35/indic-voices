@@ -1,0 +1,5 @@
+{
+  "onnx_export_succeeded": false,
+  "fallback_used": true,
+  "onnx_error": "The checkpoint you are trying to load has model type `parler_tts` but Transformers does not recognize this architecture. This could be because of an issue with the checkpoint, or because your version of Transformers is out of date."
+}
