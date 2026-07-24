@@ -1,5 +1,7 @@
 import librosa
 import os
+import time
+from datetime import datetime, timezone
 os.environ["HF_HUB_DISABLE_XET"] = "1"
 os.environ["USE_TF"] = "0"
 os.environ["USE_FLAX"] = "0"
@@ -141,12 +143,37 @@ def main():
         if (i + 1) % 5 == 0:
             backup_progress(paths=mos_clip_paths, label="mos_clips")
 
+    intelligibility_cer = jiwer.cer(refs, hyps)
+
+    # RTF: use the first MOS-loop record as a ~10s-scale reference sample
+    rtf_record = records[0]
+    desc_ids = desc_tok(rtf_record["description"], return_tensors="pt").input_ids
+    prompt_ids = prompt_tok(rtf_record["text"], return_tensors="pt").input_ids
+    t0 = time.time()
+    rtf_audio = tts_model.generate(
+        input_ids=desc_ids,
+        prompt_input_ids=prompt_ids,
+        max_new_tokens=1000,
+        use_cache=True,
+    ).cpu().numpy().squeeze()
+    processing_time = time.time() - t0
+    audio_duration = len(rtf_audio) / cfg["sample_rate"]
+    rtf = processing_time / audio_duration
+
     results = {
-        "intelligibility_wer": intelligibility_wer,
+        "task": "tts",
+        "language": "hi",
+        "model": cfg["base_model"],
+        "evaluated_at": datetime.now(timezone.utc).isoformat(),
+        "wer": intelligibility_wer,
+        "cer": intelligibility_cer,
         "intelligibility_reference_model": stt_checkpoint,
         "num_intelligibility_samples": n,
         "mos_clips_dir": "outputs/mos_clips",
         "mos_score": None,
+        "rtf": rtf,
+        "rtf_processing_time_sec": processing_time,
+        "rtf_audio_duration_sec": audio_duration,
     }
     with open(cfg["evaluation"]["metrics_output"], "w") as f:
         json.dump(results, f, indent=2)
