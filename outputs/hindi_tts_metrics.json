@@ -1,7 +1,15 @@
 {
-  "intelligibility_wer": 0.34578696343402227,
+  "task": "tts",
+  "language": "hi",
+  "model": "ai4bharat/indic-parler-tts",
+  "evaluated_at": "2026-07-24T13:58:52.749613+00:00",
+  "wer": 0.34578696343402227,
+  "cer": 0.21908437116295387,
   "intelligibility_reference_model": "vasista22/whisper-hindi-large-v2",
   "num_intelligibility_samples": 50,
   "mos_clips_dir": "outputs/mos_clips",
-  "mos_score": null
+  "mos_score": null,
+  "rtf": 12.670380380460182,
+  "rtf_processing_time_sec": 135.3346025943756,
+  "rtf_audio_duration_sec": 10.681179138321996
 }
