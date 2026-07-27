@@ -14,7 +14,12 @@ import subprocess
 import soundfile as sf
 import librosa
 from datetime import datetime, timezone
-from transformers import WhisperForConditionalGeneration, WhisperProcessor
+from transformers import (
+    WhisperForConditionalGeneration,
+    WhisperProcessor,
+    WhisperFeatureExtractor,
+    WhisperTokenizerFast,
+)
 
 sys.path.insert(0, "pipeline")
 from train import _build_audio_path_index, _remap_audio_path, _train_eval_split, _load_manifest
@@ -74,7 +79,8 @@ def main():
 
     print(f"[eval] loading model from {output_dir}", flush=True)
     model = WhisperForConditionalGeneration.from_pretrained(output_dir)
-    processor = WhisperProcessor.from_pretrained(output_dir, use_fast=True)
+    feature_extractor = WhisperFeatureExtractor.from_pretrained(output_dir)
+    tokenizer = WhisperTokenizerFast.from_pretrained(output_dir)
 
     audio_index = _build_audio_path_index(kaggle_input_dir)
     print(f"[eval] indexed {len(audio_index)} audio files", flush=True)
@@ -101,9 +107,9 @@ def main():
             if sr != 16000:
                 audio_arr = librosa.resample(audio_arr, orig_sr=sr, target_sr=16000)
 
-            inputs = processor(audio_arr, sampling_rate=16000, return_tensors="pt")
-            pred_ids = model.generate(inputs["input_features"], max_new_tokens=225)
-            hyp = processor.batch_decode(pred_ids, skip_special_tokens=True)[0]
+            inputs = feature_extractor(audio_arr, sampling_rate=16000, return_tensors="pt")
+            pred_ids = model.generate(inputs["input_features"], max_new_tokens=225, language="hi", task="transcribe")
+            hyp = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)[0]
 
             row = {"index": i, "ref": r["transcript"], "hyp": hyp}
             progress_f.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -125,9 +131,9 @@ def main():
     audio_arr, sr = sf.read(audio_path, dtype="float32")
     if sr != 16000:
         audio_arr = librosa.resample(audio_arr, orig_sr=sr, target_sr=16000)
-    inputs = processor(audio_arr, sampling_rate=16000, return_tensors="pt")
+    inputs = feature_extractor(audio_arr, sampling_rate=16000, return_tensors="pt")
     t0 = time.time()
-    _ = model.generate(inputs["input_features"], max_new_tokens=225)
+    _ = model.generate(inputs["input_features"], max_new_tokens=225, language="hi", task="transcribe")
     processing_time = time.time() - t0
     audio_duration = len(audio_arr) / 16000
     rtf = processing_time / audio_duration
