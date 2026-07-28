@@ -2,11 +2,11 @@
   "task": "stt",
   "language": "hi",
   "model": "openai/whisper-small",
-  "evaluated_at": "2026-07-27T07:12:31.241848+00:00",
-  "wer": 1.0496790399106894,
-  "cer": 0.9952128199060144,
+  "evaluated_at": "2026-07-28T17:00:41.109628+00:00",
+  "wer": 0.1716748844853785,
+  "cer": 0.06993813178268365,
   "num_eval_samples": 2562,
-  "rtf": 0.36270165000712307,
-  "rtf_processing_time_sec": 3.3999879360198975,
+  "rtf": 0.6544359931191687,
+  "rtf_processing_time_sec": 6.134723901748657,
   "rtf_audio_duration_sec": 9.3740625
 }
