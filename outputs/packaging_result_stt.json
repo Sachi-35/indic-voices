@@ -1,0 +1,6 @@
+{
+  "onnx_export_succeeded": true,
+  "fallback_used": false,
+  "onnx_error": null,
+  "onnx_dir": "outputs/onnx_export_stt"
+}
