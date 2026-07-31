@@ -151,7 +151,7 @@ def run(config: dict) -> Path:
                 continue
 
             try:
-                audio_path, duration = _save_audio(sample, idx, raw_dir, target_sr)
+                audio_path, duration = _save_audio(sample, idx, raw_dir, target_sr, audio_column=config.get("audio_column", "audio"))
                 transcript = _extract_transcript(sample)
 
                 if transcript is None:
@@ -243,16 +243,39 @@ def _filter_rows_with_valid_audio(rows: list[dict]) -> tuple[list[dict], int]:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _save_audio(sample: dict, idx: int, raw_dir: Path, target_sr: int):
+def _save_audio(sample: dict, idx: int, raw_dir: Path, target_sr: int, audio_column: str = "audio"):
     """
     Extract audio from a HuggingFace sample, resample to target_sr,
     convert to mono, save as WAV.
 
+    Handles two audio representations seen across dataset configs:
+      - Legacy dict format: {"array": np.ndarray, "sampling_rate": int}
+      - Newer datasets.AudioDecoder (torchcodec-based lazy decoder) objects,
+        which expose .get_all_samples() -> object with .data (tensor) and
+        .sample_rate. Some IndicVoices sub-configs (e.g. Tamil) use this
+        format and a differently-named column (audio_filepath), found
+        while adding Tamil support in Week 6.
+
     Returns (path, duration_seconds).
     """
-    audio_data = sample.get("audio", {})
-    array = np.array(audio_data["array"], dtype=np.float32)
-    original_sr = audio_data["sampling_rate"]
+    audio_data = sample.get(audio_column)
+    if audio_data is None:
+        raise KeyError(f"Audio column '{audio_column}' not found in sample "
+                        f"(available keys: {list(sample.keys())})")
+
+    if isinstance(audio_data, dict):
+        array = np.array(audio_data["array"], dtype=np.float32)
+        original_sr = audio_data["sampling_rate"]
+    elif hasattr(audio_data, "get_all_samples"):
+        decoded = audio_data.get_all_samples()
+        tensor = decoded.data
+        array = tensor.numpy().astype(np.float32)
+        if array.ndim > 1:
+            array = array.mean(axis=0)  # torchcodec returns (channels, samples)
+        original_sr = int(decoded.sample_rate)
+    else:
+        raise TypeError(f"Unsupported audio object type for column '{audio_column}': "
+                         f"{type(audio_data)}")
 
     # Resample if needed
     if original_sr != target_sr:
