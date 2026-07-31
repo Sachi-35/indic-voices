@@ -166,12 +166,15 @@ def _load_align_model(config: dict):
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     language = config.get("language", "hi")
-    model_name = config.get(
-        "alignment_model",
-        "WAV2VEC2_ASR_LARGE_LV60K_960H"
-    )
+    # Only pass an explicit model_name if the config sets one — otherwise
+    # let WhisperX pick its own per-language default. The old code hardcoded
+    # an English-only wav2vec2 model as the fallback for every language,
+    # which silently produces meaningless alignment scores for non-English
+    # languages (found while adding Tamil support in Week 6).
+    model_name = config.get("alignment_model", None)
 
-    logger.info(f"Loading alignment model '{model_name}' on {device}…")
+    logger.info(f"Loading alignment model for language='{language}' "
+                f"(explicit model_name={model_name!r}) on {device}…")
     model, metadata = whisperx.load_align_model(
         language_code=language,
         device=device,
