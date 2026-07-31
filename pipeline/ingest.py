@@ -136,7 +136,13 @@ def run(config: dict) -> Path:
         if write_header:
             writer.writeheader()
 
+        max_samples = config.get("max_samples")
+
         for idx, sample in enumerate(dataset):
+            if max_samples is not None and idx >= max_samples:
+                logger.info(f"Reached max_samples={max_samples}, stopping ingest.")
+                break
+
             # Skip samples already done in a previous run. We still have
             # to iterate past them (streaming can't seek), but we don't
             # redo any of the expensive save/resample work.
