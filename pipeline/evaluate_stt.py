@@ -24,8 +24,9 @@ from transformers import (
 sys.path.insert(0, "pipeline")
 from train import _build_audio_path_index, _remap_audio_path, _train_eval_split, _load_manifest
 
-CONFIG_PATH = "configs/hindi_stt.yaml"
-PROGRESS_PATH = "outputs/eval_stt_progress.jsonl"
+CONFIG_PATH = sys.argv[1] if len(sys.argv) > 1 else "configs/hindi_stt.yaml"
+_lang = CONFIG_PATH.split("/")[-1].replace("_stt.yaml", "")
+PROGRESS_PATH = f"outputs/eval_stt_progress_{_lang}.jsonl"
 
 
 def backup_progress(paths=None, label="progress"):

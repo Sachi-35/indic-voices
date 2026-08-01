@@ -73,9 +73,12 @@ no code changes to this evaluation or model card generation logic.
     print(f"Model card written to {output_path}")
 
 if __name__ == "__main__":
+    import sys
+    config_path = sys.argv[1] if len(sys.argv) > 1 else "configs/hindi_stt.yaml"
+    lang = config_path.split("/")[-1].replace("_stt.yaml", "")
     generate_model_card(
-        "configs/hindi_stt.yaml",
-        "outputs/hindi_stt_metrics.json",
-        "outputs/hindi_stt_model_card.md",
-        packaging_path="outputs/packaging_result_stt.json",
+        config_path,
+        f"outputs/{lang}_stt_metrics.json",
+        f"outputs/{lang}_stt_model_card.md",
+        packaging_path=f"outputs/packaging_result_stt_{lang}.json",
     )

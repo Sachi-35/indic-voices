@@ -46,3 +46,5 @@ evaluation:
   num_eval_samples: 50
   metrics_output: outputs/tamil_stt_metrics.json
 audio_column: audio_filepath
+
+alignment_model: Amrrs/wav2vec2-large-xlsr-53-tamil

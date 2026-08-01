@@ -40,5 +40,12 @@ def package_stt(config_path):
     return result
 
 if __name__ == "__main__":
-    result = package_stt("configs/hindi_stt.yaml")
+    import sys, os
+    config_path = sys.argv[1] if len(sys.argv) > 1 else "configs/hindi_stt.yaml"
+    lang = config_path.split("/")[-1].replace("_stt.yaml", "")
+    with open(config_path) as f:
+        import yaml
+        cfg = yaml.safe_load(f)
+    result = package_stt(config_path)
+    os.rename("outputs/packaging_result_stt.json", f"outputs/packaging_result_stt_{lang}.json") if os.path.exists("outputs/packaging_result_stt.json") else None
     print(result)
