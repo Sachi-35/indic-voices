@@ -83,8 +83,12 @@ def main():
     feature_extractor = WhisperFeatureExtractor.from_pretrained(output_dir)
     tokenizer = WhisperTokenizerFast.from_pretrained(output_dir)
 
-    audio_index = _build_audio_path_index(kaggle_input_dir)
-    print(f"[eval] indexed {len(audio_index)} audio files", flush=True)
+    if kaggle_input_dir:
+        audio_index = _build_audio_path_index(kaggle_input_dir)
+        print(f"[eval] indexed {len(audio_index)} audio files", flush=True)
+    else:
+        audio_index = None
+        print("[eval] no kaggle_input_dir set — using manifest audio_path values directly", flush=True)
 
     records = _load_manifest(cfg["paths"]["manifest"])
     _, eval_records = _train_eval_split(records, eval_split)
@@ -103,7 +107,7 @@ def main():
                     print(f"[eval] sample {i+1}/{n} already done, skipping", flush=True)
                 continue
 
-            audio_path = _remap_audio_path(r["audio_path"], audio_index)
+            audio_path = _remap_audio_path(r["audio_path"], audio_index) if audio_index is not None else r["audio_path"]
             audio_arr, sr = sf.read(audio_path, dtype="float32")
             if sr != 16000:
                 audio_arr = librosa.resample(audio_arr, orig_sr=sr, target_sr=16000)
@@ -128,7 +132,7 @@ def main():
 
     # RTF on one sample
     rtf_record = eval_records[0]
-    audio_path = _remap_audio_path(rtf_record["audio_path"], audio_index)
+    audio_path = _remap_audio_path(rtf_record["audio_path"], audio_index) if audio_index is not None else rtf_record["audio_path"]
     audio_arr, sr = sf.read(audio_path, dtype="float32")
     if sr != 16000:
         audio_arr = librosa.resample(audio_arr, orig_sr=sr, target_sr=16000)
