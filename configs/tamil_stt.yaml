@@ -1,0 +1,48 @@
+
+language: ta
+script: tamil
+language_name: Tamil
+dataset: ai4bharat/IndicVoices
+dataset_split: valid
+dataset_language_key: tamil
+sample_rate: 16000
+channels: 1
+audio_format: wav
+max_samples: 500
+min_duration: 1.0
+max_duration: 20.0
+min_rms_db: -40.0
+remove_empty_transcripts: true
+normalize_numerals: true
+strip_extra_whitespace: true
+min_alignment_score: 0.5
+align_batch_size: 16
+base_model: openai/whisper-small
+task: transcribe
+eval_split: 0.1
+output_dir: models/tamil_stt
+
+training:
+  num_train_epochs: 3
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 4
+  learning_rate: 1e-5
+  warmup_steps: 20
+  save_steps: 100
+  eval_steps: 100
+  logging_steps: 10
+  fp16: true
+  gradient_checkpointing: true
+  dataloader_num_workers: 2
+  kaggle_backup_dataset_id: sachi35/tamil-stt-checkpoints
+
+paths:
+  raw_dir: data/raw/ta
+  processed_dir: data/processed/ta
+  manifest: data/processed/ta/manifest.json
+  catalogue: data/processed/ta/catalogue.csv
+
+evaluation:
+  num_eval_samples: 50
+  metrics_output: outputs/tamil_stt_metrics.json
+audio_column: audio_filepath
