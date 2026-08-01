@@ -281,9 +281,14 @@ def _save_audio(sample: dict, idx: int, raw_dir: Path, target_sr: int, audio_col
     if original_sr != target_sr:
         array = _resample(array, original_sr, target_sr)
 
-    # Force mono: if stereo (2D array), average channels
+    # Force mono: if stereo (2D array), average channels.
+    # AudioDecoder tensors are channel-first: (channels, samples).
+    # Older {"array": ...} dicts are typically sample-first: (samples, channels).
+    # Heuristic: audio has far more samples than channels, so the larger
+    # dimension is the samples axis — average over whichever axis is smaller.
     if array.ndim > 1:
-        array = array.mean(axis=1)
+        channel_axis = 0 if array.shape[0] < array.shape[1] else 1
+        array = array.mean(axis=channel_axis)
 
     duration = len(array) / target_sr
     out_path = raw_dir / f"sample_{idx:06d}.wav"
