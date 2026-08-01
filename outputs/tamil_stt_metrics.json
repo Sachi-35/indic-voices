@@ -1,12 +1,12 @@
 {
   "task": "stt",
-  "language": "hi",
+  "language": "ta",
   "model": "openai/whisper-small",
-  "evaluated_at": "2026-08-01T11:08:03.400776+00:00",
+  "evaluated_at": "2026-08-01T11:32:33.975162+00:00",
   "wer": 1.1657657657657658,
   "cer": 0.9558366622281402,
   "num_eval_samples": 32,
-  "rtf": 0.8828634065504944,
-  "rtf_processing_time_sec": 10.313610315322876,
+  "rtf": 0.9161794946896175,
+  "rtf_processing_time_sec": 10.702808856964111,
   "rtf_audio_duration_sec": 11.682
 }
