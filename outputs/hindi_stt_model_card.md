@@ -3,7 +3,7 @@
 ## Model
 - **Base model:** openai/whisper-small
 - **Language:** hi
-- **Dataset:** IndicVoices (base corpus, Kaggle: /kaggle/input/datasets/sachi35/indicvoices-hindi-stage1)
+- **Dataset:** ai4bharat/indicvoices_r (via Kaggle: /kaggle/input/datasets/sachi35/indicvoices-hindi-stage1)
 - **Task:** transcribe
 
 ## Evaluation
@@ -17,9 +17,7 @@
   - Audio duration: 9.37s
 
 ## Packaging / Export
-ONNX export succeeded. See `outputs/onnx_export_stt`.
-
-Note: export validation reported a minor numerical mismatch (~6e-05, just above the 1e-05 tolerance) between tied embedding weights (`model.decoder.embed_tokens.weight` vs `proj_out.weight`) in the exported graph — a common floating-point artifact of ONNX tied-weight handling, not evidence the export is broken. Worth a quick sanity check (compare a few sample outputs from the ONNX model vs. the original) before relying on it for production inference.
+Packaging step not yet run.
 
 ## Known limitations
 - Base model spec originally referenced `ai4bharat/indicwhisper-hi`; actual training

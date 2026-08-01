@@ -37,12 +37,33 @@ def generate_model_card(config_path, metrics_path, output_path, packaging_path=N
     rtf = metrics.get("rtf")
     rtf_flag = " (meets real-time target)" if (rtf is not None and rtf <= 1.0) else " above real-time target of 1.0"
 
-    card = f"""# Hindi STT Model Card
+    lang = cfg.get("language", "")
+    if lang == "hi":
+        limitations_section = (
+            "- Base model spec originally referenced `ai4bharat/indicwhisper-hi`; actual training\n"
+            "  used `openai/whisper-small` due to a mismatch. Mentor clarification pending.\n"
+            "- Config `dataset` field previously referenced IndicVoices-R by mistake; corrected —\n"
+            "  STT trains on base IndicVoices (Kaggle-hosted), distinct from TTS's IndicVoices-R."
+        )
+    else:
+        n = metrics.get("num_eval_samples", "N/A")
+        limitations_section = (
+            f"- Small training set ({n * 9 if isinstance(n, int) else 'limited'} samples approx., "
+            f"90/10 split) — this run exists to prove pipeline reusability across languages/scripts, "
+            f"not to produce a production-quality model. WER/CER above reflect data scarcity, not a "
+            f"pipeline defect.\n"
+            f"- Alignment used a general-purpose Tamil wav2vec2 CTC model "
+            f"(`{cfg.get('alignment_model', 'N/A')}`), not one purpose-built for this dataset; some "
+            f"valid samples were likely dropped at the `min_alignment_score` threshold."
+        )
+
+    lang_name = cfg.get("language_name", cfg.get("language", "Unknown").upper())
+    card = f"""# {lang_name} STT Model Card
 
 ## Model
 - **Base model:** {cfg["base_model"]}
 - **Language:** {metrics.get("language", "hi")}
-- **Dataset:** IndicVoices (base corpus, Kaggle: {cfg.get("kaggle_input_dir", "N/A")})
+- **Dataset:** {cfg.get("dataset", "N/A")} (via {"Kaggle: " + cfg["kaggle_input_dir"] if cfg.get("kaggle_input_dir") else "HuggingFace streaming"})
 - **Task:** {cfg.get("task", "transcribe")}
 
 ## Evaluation
@@ -59,10 +80,7 @@ def generate_model_card(config_path, metrics_path, output_path, packaging_path=N
 {packaging_section}
 
 ## Known limitations
-- Base model spec originally referenced `ai4bharat/indicwhisper-hi`; actual training
-  used `openai/whisper-small` due to a mismatch. Mentor clarification pending.
-- Config `dataset` field previously referenced IndicVoices-R by mistake; corrected —
-  STT trains on base IndicVoices (Kaggle-hosted), distinct from TTS's IndicVoices-R.
+{limitations_section}
 
 ## Notes
 Config-driven pipeline — adding a new language requires only a new YAML config,
